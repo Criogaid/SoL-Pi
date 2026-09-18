@@ -12,11 +12,13 @@ interface PackReport {
 }
 
 function packedFiles(): string[] {
-	const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
+	const result = spawnSync("npm pack --dry-run --json", {
 		cwd: process.cwd(),
 		encoding: "utf8",
+		shell: true,
 		timeout: 25_000,
 	});
+	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error(result.stderr || result.stdout);
 	const report = JSON.parse(result.stdout) as PackReport[];
 	return report[0]?.files.map((file) => file.path) ?? [];
