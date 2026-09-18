@@ -67,3 +67,17 @@ The test suite drives every extension through the same public `ExtensionAPI` and
 `tests/pi-package-integration.test.ts` loads the actual TypeScript entrypoint through Pi's `DefaultResourceLoader`, reads a trusted all-enabled project configuration, and executes a fused write/command and a plan update in a real `AgentSession`. `tests/online-context-compact-agent-session.test.ts` verifies one and two consecutive native compactions and waits for automatic continuation before the original prompt returns. These integration tests use Pi's deterministic faux provider; they verify runtime compatibility, not live provider authentication or token savings.
 
 The 0.84.2 backward-compatibility run used an isolated copy of the current source and tests, separate dependencies, and an empty Pi agent directory. Only the copy's four Pi development dependency versions, lockfile, and installation-guide version mentions changed. No source or test changes were needed. The run included all four mechanisms and the native compaction/continuation integration tests; it did not repeat live-provider benchmarks on 0.84.2.
+
+## Windows maintenance fork
+
+The `Criogaid/SoL-Pi` fork adds native Windows checks alongside Linux on Node.js 22.19 and 24. Windows requires Git for Windows (including Bash) for Action Fusion's `then_run` commands; installing SoL-Pi does not convert Bash commands into PowerShell.
+
+Windows-specific changes:
+
+- Action Fusion resolves `~\` home paths consistently with Pi's built-in file tools.
+- ObservationPack explicitly rejects symbolic links and checks the opened file identity against `lstat()`. This also protects reads where Node does not expose `O_NOFOLLOW`. It does not make the archive a sandbox against processes that can modify its parent directories or file contents.
+- Package tests launch the fixed npm command through the platform shell, and integration tests use native path separators.
+- POSIX `0600` assertions run only on POSIX platforms. On Windows, archive confidentiality depends on the session directory's inherited ACL; this extension does not provision Windows ACLs.
+- Directory-link tests use Windows junctions without elevation. The real file-symlink test reports a skip only when Windows rejects link creation with `EPERM`; deterministic link-rejection and file-identity checks still run. Enable Developer Mode or use a privileged test runner to exercise the real file-symlink case.
+
+The suite includes a real Pi resource-loader/AgentSession integration, fused Bash execution, exact observation recall, reducer validation with a fake provider, and native compaction/continuation. Passing it does not verify live model authentication, bill savings, or compatibility with every third-party extension. Action Fusion's `edit` still conflicts with hashline edit overrides; this fork does not combine those tool implementations.

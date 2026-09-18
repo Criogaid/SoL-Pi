@@ -240,7 +240,7 @@ describe("observation pack", () => {
 		expect(projected[2]).toMatch(new RegExp(`id: ${id}`, "u"));
 	});
 
-	it("fails recall closed when an object path is replaced by a symlink", async () => {
+	it("fails recall closed when an object path is replaced by a symlink", async (context) => {
 		const sessionDir = await sessionRoot();
 		const body = `stored\n${repeatPastThreshold("observation bytes\n")}`;
 		const message = toolResult(body);
@@ -251,7 +251,15 @@ describe("observation pack", () => {
 		const target = join(sessionDir, "symlink-target.txt");
 		await writeFile(target, "target bytes must not be recalled");
 		await rm(path);
-		await symlink(target, path);
+		try {
+			await symlink(target, path);
+		} catch (error) {
+			if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+				context.skip("File symlinks require Windows Developer Mode or elevated privileges");
+				return;
+			}
+			throw error;
+		}
 
 		await expect(
 			pi.tool("obs_recall").execute("recall-1", { id, offset: 0 }, undefined, undefined, fakeContext(sessionDir)),
@@ -289,7 +297,7 @@ describe("observation pack", () => {
 		const sessionDir = await sessionRoot();
 		const targetDir = await sessionRoot();
 		await mkdir(join(sessionDir, "sol-pi", SESSION_ID, "observation-pack"), { recursive: true });
-		await symlink(targetDir, observationObjectsDirectory(sessionDir), "dir");
+		await symlink(targetDir, observationObjectsDirectory(sessionDir), process.platform === "win32" ? "junction" : "dir");
 		const body = `directory guard\n${repeatPastThreshold("must not escape\n")}`;
 		const message = toolResult(body);
 		const id = observationId(message);

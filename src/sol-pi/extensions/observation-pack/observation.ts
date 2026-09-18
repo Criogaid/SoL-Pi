@@ -18,8 +18,28 @@ export const PLACEHOLDER_EXCERPT_BYTES = 1024;
 
 const CHARS_PER_TOKEN = 4;
 const OBSERVATION_ID_PATTERN = /^obs_[a-f0-9]{24}$/u;
-const READ_OBJECT_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW;
-const CREATE_OBJECT_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+const READ_OBJECT_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+const CREATE_OBJECT_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+
+async function openObservation(path: string): Promise<FileHandle> {
+	// Windows 没有 O_NOFOLLOW；打开前拒绝链接，打开后核对文件身份。
+	const before = await lstat(path, { bigint: true });
+	if (before.isSymbolicLink()) {
+		throw Object.assign(new Error("Stored observation must not be a symbolic link"), { code: "ELOOP" });
+	}
+	if (!before.isFile()) throw new Error("Stored observation is not a regular file");
+	const handle = await open(path, READ_OBJECT_FLAGS);
+	try {
+		const opened = await handle.stat({ bigint: true });
+		if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+			throw new Error("Stored observation changed while opening");
+		}
+		return handle;
+	} catch (error) {
+		await handle.close();
+		throw error;
+	}
+}
 
 /**
  * Receipts from the evidence-preserving reducer are already a reduction of a
@@ -134,7 +154,7 @@ export async function ensureStored(observation: Observation): Promise<void> {
 		await handle.writeFile(observation.text, { encoding: "utf8" });
 	} catch (error) {
 		if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-		const existingHandle = await open(observation.filePath, READ_OBJECT_FLAGS);
+		const existingHandle = await openObservation(observation.filePath);
 		try {
 			const existing = await existingHandle.stat();
 			if (!existing.isFile()) {
@@ -215,7 +235,7 @@ export async function readRecallChunk(
 	offset: number,
 	limits: { readonly maxBytes: number; readonly maxLines: number },
 ): Promise<RecallChunk> {
-	const handle = await open(path, READ_OBJECT_FLAGS);
+	const handle = await openObservation(path);
 	try {
 		const fileStats = await handle.stat();
 		if (!fileStats.isFile()) throw new Error("Stored observation is not a regular file");

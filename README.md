@@ -14,6 +14,8 @@
 
 > [!NOTE]
 > This repository contains the open-source version of SoL-Pi, a standalone extension for [Pi](https://github.com/earendil-works/pi). It is not an official distribution of Pi.
+>
+> **Windows maintenance fork:** `Criogaid/SoL-Pi` carries Windows path and archive-read fixes plus Windows/Linux CI. See [Windows compatibility notes](docs/compatibility.md#windows-maintenance-fork) for requirements and remaining limitations. To select this fork explicitly, use `pi install git:github.com/Criogaid/SoL-Pi`.
 
 ## 💡 TL;DR
 
