@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -41,6 +41,15 @@ function context(cwd: string): ExtensionContext {
 }
 
 describe("Action Fusion file URL paths", () => {
+	it("resolves home paths using the platform's separators", () => {
+		const cwd = join(tmpdir(), "action-fusion-cwd");
+		expect(resolveToolPath(cwd, "~/target.txt")).toBe(join(homedir(), "target.txt"));
+		if (process.platform === "win32") {
+			expect(resolveToolPath(cwd, "~\\target.txt")).toBe(join(homedir(), "target.txt"));
+			expect(resolveToolPath(cwd, "@~\\target.txt")).toBe(join(homedir(), "target.txt"));
+		}
+	});
+
 	it.each(["target.txt", "space and #hash %.txt"])("resolves a file URL and @file URL for %s", (name) => {
 		const cwd = join(tmpdir(), "action-fusion-cwd");
 		const target = resolve(tmpdir(), name);

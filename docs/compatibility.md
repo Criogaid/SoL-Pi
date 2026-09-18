@@ -1,6 +1,6 @@
 # Pi Compatibility
 
-SoL-Pi is developed and tested against `@earendil-works/pi-coding-agent` 0.85.1 and remains compatible with the originally supported 0.84.2 release. The current 19 test files (140 tests), type checking, package inspection, public API checks, and offline extension startup passed on both releases. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
+SoL-Pi is developed and tested against `@earendil-works/pi-coding-agent` 0.85.1. Earlier validation also covered 0.84.2; the Windows changes have not been revalidated on that release. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
 
 SoL-Pi imports only public package exports:
 
@@ -66,4 +66,12 @@ The test suite drives every extension through the same public `ExtensionAPI` and
 
 `tests/pi-package-integration.test.ts` loads the actual TypeScript entrypoint through Pi's `DefaultResourceLoader`, reads a trusted all-enabled project configuration, and executes a fused write/command and a plan update in a real `AgentSession`. `tests/online-context-compact-agent-session.test.ts` verifies one and two consecutive native compactions and waits for automatic continuation before the original prompt returns. These integration tests use Pi's deterministic faux provider; they verify runtime compatibility, not live provider authentication or token savings.
 
-The 0.84.2 backward-compatibility run used an isolated copy of the current source and tests, separate dependencies, and an empty Pi agent directory. Only the copy's four Pi development dependency versions, lockfile, and installation-guide version mentions changed. No source or test changes were needed. The run included all four mechanisms and the native compaction/continuation integration tests; it did not repeat live-provider benchmarks on 0.84.2.
+The earlier 0.84.2 backward-compatibility run used an isolated copy of the then-current source and tests, separate dependencies, and an empty Pi agent directory. Only the copy's four Pi development dependency versions, lockfile, and installation-guide version mentions changed. No source or test changes were needed. The run included all four mechanisms and the native compaction/continuation integration tests; it did not repeat live-provider benchmarks on 0.84.2.
+
+## Windows compatibility
+
+Action Fusion's `then_run` commands require Bash on Windows, available through Git for Windows. Its file paths support `~\` home expansion consistently with Pi's built-in tools; no additional SoL-Pi configuration is required.
+
+When reusing or recalling an observation, ObservationPack rejects a symbolic link before opening it and checks the opened file's identity. Native `O_NOFOLLOW` remains enabled where available. The additional `lstat()` and file-handle `stat()` run on all platforms; these checks add filesystem I/O and are not an atomic defense against processes that can replace parent directories or modify file contents.
+
+Windows archive confidentiality depends on the session directory's inherited ACLs; SoL-Pi does not provision Windows ACLs.

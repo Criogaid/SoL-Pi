@@ -19,7 +19,9 @@ export function resolveToolPath(cwd: string, filePath: string): string {
 	// Pi accepts file URLs; the queue and hash guard must use the same target.
 	const expanded = stripped.startsWith("file://") ? fileURLToPath(stripped) : stripped;
 	if (expanded === "~") return homedir();
-	if (expanded.startsWith("~/")) return resolve(homedir(), expanded.slice(2));
+	if (expanded.startsWith("~/") || (process.platform === "win32" && expanded.startsWith("~\\"))) {
+		return resolve(homedir(), expanded.slice(2));
+	}
 	return resolve(cwd, expanded);
 }
 
