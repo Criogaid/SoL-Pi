@@ -49,7 +49,7 @@
   color: #777c81;
 }
 
-.hero-resource--github::after {
+.hero-resource--link::after {
   content: "";
   position: absolute;
   left: 0;
@@ -62,19 +62,19 @@
   transition: transform .2s ease;
 }
 
-.hero-resource--github:is(:hover, :focus-visible) .hero-resource-primary {
+.hero-resource--link:is(:hover, :focus-visible) .hero-resource-primary {
   color: var(--nv-green-dark);
 }
 
-.hero-resource--github:is(:hover, :focus-visible) .hero-resource-arrow {
+.hero-resource--link:is(:hover, :focus-visible) .hero-resource-arrow {
   transform: translate(2px, -2px);
 }
 
-.hero-resource--github:is(:hover, :focus-visible)::after {
+.hero-resource--link:is(:hover, :focus-visible)::after {
   transform: scaleX(1);
 }
 
-.hero-resource--github:focus-visible {
+.hero-resource--link:focus-visible {
   outline: 2px solid var(--nv-green);
   outline-offset: 7px;
 }
@@ -88,7 +88,7 @@
 @media (prefers-reduced-motion: reduce) {
   .hero-resource-primary,
   .hero-resource-arrow,
-  .hero-resource--github::after {
+  .hero-resource--link::after {
     transition: none;
   }
 }
