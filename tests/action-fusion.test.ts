@@ -119,31 +119,50 @@ describe("action fusion then_run", () => {
 	});
 
 	it.each([
-		{ label: "default checkout name", cwd: join(tmpdir(), "SoL-Pi"), path: "target.ts" },
-		{ label: "unrelated checkout name", cwd: join(tmpdir(), "plain-checkout"), path: "target.ts" },
-		{ label: "repository name in the target path", cwd: join(tmpdir(), "plain-checkout"), path: "SoL-Pi/target.ts" },
-	])("renders a fused mutation as an English lightning savings call ($label)", ({ cwd, path }) => {
-		const { write } = loadFusedTools();
-		const fusedArgs = {
-			path,
-			content: "export {};\n",
-			then_run: { command: "npm test" },
-		};
-		const fused = write.renderCall!(fusedArgs, plainTheme, {
-			cwd,
-			args: fusedArgs,
-		} as never);
-		const plainArgs = { path, content: "export {};\n" };
-		const plain = write.renderCall!(plainArgs, plainTheme, {
-			cwd,
-			args: plainArgs,
-		} as never);
+		{
+			name: "write",
+			select: (tools: FusedTools) => tools.write,
+			args: { path: "target.ts", content: "export {};\n", then_run: { command: "npm test" } },
+			builtInText: "target.ts",
+		},
+		{
+			name: "edit",
+			select: (tools: FusedTools) => tools.edit,
+			args: {
+				path: "target.ts",
+				edits: [{ oldText: "before", newText: "after" }],
+				then_run: { command: "npm test" },
+			},
+			builtInText: "target.ts",
+		},
+	])("waits for a successful fused $name result before claiming savings", ({ select, args, builtInText }) => {
+		const tool = select(loadFusedTools());
+		const renderContext = { cwd: process.cwd(), args, state: {} };
+		const call = componentText(tool.renderCall!(args, plainTheme, renderContext as never));
+		expect(call).toContain(builtInText);
+		expect(call).not.toContain("Money saved");
 
-		expect(componentText(fused)).toContain("⚡ SoL-Pi · Action Fusion");
-		expect(componentText(fused)).toContain("Money saved · 1 model round-trip avoided");
-		// A normal path or its OSC 8 hyperlink may contain the repository name.
-		expect(componentText(plain)).not.toContain("⚡ SoL-Pi · Action Fusion");
-		expect(componentText(plain)).not.toContain("Money saved · 1 model round-trip avoided");
+		const cases = [
+			{ text: "[then_run:succeeded]", isError: false, isPartial: false, expected: true },
+			{ text: "[then_run:succeeded]\ntests passed", isError: false, isPartial: false, expected: true },
+			{ text: "prefix [then_run:succeeded]", isError: false, isPartial: false, expected: false },
+			{ text: "[then_run:succeeded]", isError: false, isPartial: true, expected: false },
+			{ text: "[then_run:succeeded]", isError: true, isPartial: false, expected: false },
+			{ text: "mutation completed", isError: false, isPartial: false, expected: false },
+			{ text: "[then_run:failed]\ntests failed", isError: true, isPartial: false, expected: false },
+			{ text: "[then_run:skipped] file changed", isError: true, isPartial: false, expected: false },
+		];
+		for (const testCase of cases) {
+			const rendered = componentText(
+				tool.renderResult!(
+					{ content: [{ type: "text", text: testCase.text }], details: undefined },
+					{ expanded: false, isPartial: testCase.isPartial },
+					plainTheme,
+					{ ...renderContext, isError: testCase.isError } as never,
+				),
+			);
+			expect(rendered.includes("Money saved · 1 model round-trip avoided")).toBe(testCase.expected);
+		}
 	});
 
 	it("runs write then_run through bash after the written content is visible", async () => {
@@ -172,6 +191,61 @@ describe("action fusion then_run", () => {
 		expect(commands).toEqual(["check write"]);
 		expect(text(result)).toContain("[then_run:succeeded]");
 		expect(text(result)).toContain("write check passed");
+	});
+
+	it("passes the configured shell path to then_run without spawning it", async () => {
+		const dir = await createTempDir();
+		const filePath = join(dir, "configured-shell.txt");
+		const shellPath = join(dir, "configured-shell");
+		const loadShellPath = vi.fn(() => shellPath);
+		const createBashToolDefinition = vi.fn((_cwd, options) => ({
+			name: "bash",
+			execute: async () => ({
+				content: [{ type: "text" as const, text: "configured shell propagated\n" }],
+				details: undefined,
+			}),
+		})) as unknown as NonNullable<ActionFusionOptions["createBashToolDefinition"]>;
+		const { write } = loadFusedTools({ loadShellPath, createBashToolDefinition });
+		const ctx = createContext(dir, { isProjectTrusted: () => false });
+
+		const result = await write.execute(
+			"write-shell-path",
+			{ path: filePath, content: "content\n", then_run: { command: "check shell" } },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		expect(loadShellPath).toHaveBeenCalledOnce();
+		expect(loadShellPath).toHaveBeenCalledWith(ctx);
+		expect(createBashToolDefinition).toHaveBeenCalledWith(dir, { shellPath });
+		expect(text(result)).toContain("configured shell propagated");
+	});
+
+	it("keeps explicit bash options ahead of configured shell settings", async () => {
+		const dir = await createTempDir();
+		const explicitOptions = { shellPath: join(dir, "explicit-shell") };
+		const loadShellPath = vi.fn(() => join(dir, "settings-shell"));
+		const createBashToolDefinition = vi.fn((_cwd, options) => ({
+			name: "bash",
+			execute: async () => ({ content: [], details: undefined }),
+		})) as unknown as NonNullable<ActionFusionOptions["createBashToolDefinition"]>;
+		const { write } = loadFusedTools({
+			bashOptions: explicitOptions,
+			loadShellPath,
+			createBashToolDefinition,
+		});
+
+		await write.execute(
+			"write-explicit-shell",
+			{ path: "explicit.txt", content: "content\n", then_run: { command: "check shell" } },
+			undefined,
+			undefined,
+			createContext(dir),
+		);
+
+		expect(loadShellPath).not.toHaveBeenCalled();
+		expect(createBashToolDefinition).toHaveBeenCalledWith(dir, explicitOptions);
 	});
 
 	it("announces savings only after a fused command succeeds in TUI mode", async () => {
