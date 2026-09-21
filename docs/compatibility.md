@@ -2,7 +2,7 @@
 
 SoL-Pi is developed and tested against `@earendil-works/pi-coding-agent` 0.85.1 and remains compatible with the originally supported 0.84.2 release. The current 19 test files (140 tests), type checking, package inspection, public API checks, and offline extension startup passed on both releases. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
 
-SoL-Pi imports only public package exports:
+SoL-Pi declares Pi package peers at `>=0.84.2 <0.86.0`, matching the fully validated runtime range without admitting unverified pre-1.0 minor releases. Pi 0.81.1 remains an API compatibility check rather than a supported runtime baseline. SoL-Pi imports only public package exports:
 
 - `createEditToolDefinition`
 - `createWriteToolDefinition`
@@ -19,11 +19,17 @@ The built-in edit/write definitions capture their working directory, so SoL-Pi c
 
 Action Fusion decodes `file://` targets with Node's `fileURLToPath()` before resolving the queue and hash-check path. This keeps file URLs, including percent-encoded filenames and Pi's optional `@` prefix, aligned with the file handled by the built-in mutation tool.
 
+On Windows it applies the same drive-path conversion Pi's own resolver applies, so Git Bash, MSYS, Cygwin, and WSL targets such as `/c/src/app.ts` and home-relative `~\` paths resolve to the file the built-in mutation tool wrote. On other platforms those inputs keep their POSIX meaning.
+
 The queue covers only fused operations registered by this SoL-Pi instance. External processes, direct built-in-tool calls outside the replacement, and unrelated extensions are not globally locked. SoL-Pi hashes the target immediately before launching `then_run` and skips the command if it observes an intervening content change.
 
 ## ObservationPack
 
 ObservationPack changes only the messages projected through the public `context` event. Stored session history remains intact. Original bytes and the JSONL ledger live under the session-derived SoL-Pi directory.
+
+The directory returned by Pi's `SessionManager.getSessionDir()` is the trusted storage boundary; Pi's session directory and its ancestors must remain under the user's control. Before creating or opening an object, ObservationPack checks every descendant directory (`sol-pi`, the session id, `observation-pack`, and `objects`). Missing directories are created individually, and each component must be an ordinary directory before traversal continues. The complete descendant chain is checked again after object open, before reading or writing payload bytes. Pre-existing symlinks and Windows junctions reported as symbolic links by Node's `lstat()` are rejected, including a linked runtime root.
+
+Object access also uses `O_NOFOLLOW` where available, and requires the pathname and open handle to identify the same regular file. These checks detect the tested directory substitutions and path-restoration races. Node's portable filesystem API does not provide directory-handle-relative traversal: the checks are not an atomic defense against a process that can repeatedly replace storage ancestors during validation. Other Windows reparse-point types are not covered by the junction tests. Native Windows execution remains an outstanding validation gate; the simulated no-`O_NOFOLLOW` lifecycle does not establish native reparse-point safety.
 
 ## Evidence-Preserving Reducer
 
@@ -32,6 +38,18 @@ The reducer handles public `tool_result` events and resolves the configured redu
 All persistent paths use `SessionManager.getSessionDir()` and `getSessionId()`, which are present in both the fork and Pi 0.85.1. SoL-Pi creates no configurable storage-path surface.
 
 The unpublished shared artifact layout is not read or migrated. Each session starts from its own `<sessionDir>/sol-pi/<sessionId>/` directory.
+
+Accepted reducer receipts are reused from a session-local, in-memory LRU cache
+of at most 64 entries. Reuse requires identical source bytes, command, error
+status, configured reducer provider/model, output limit, receipt schema, and
+reducer instructions. Every hit still verifies the source archive and validates
+the quoted evidence, then rebuilds the receipt for the current tool result.
+Hits record a `cache_hit` journal event and zero new reducer token usage; they do
+not record another provider response. Failed or rejected reductions are never
+cached. The cache adds no files and is empty after a process restart. Concurrent
+first occurrences may still make separate model calls; this cache reuses only
+completed, accepted results. Actual cost savings depend on repeated identical
+logs and the configured model's billing.
 
 ## Online Context Compact
 
