@@ -12,10 +12,11 @@ interface PackReport {
 }
 
 function packedFiles(): string[] {
-	const result = spawnSync("npm pack --dry-run --json", {
+	const args = ["pack", "--dry-run", "--json"];
+	const npmExecutable = process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : "npm";
+	const result = spawnSync(npmExecutable, process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args, {
 		cwd: process.cwd(),
 		encoding: "utf8",
-		shell: true,
 		timeout: 25_000,
 	});
 	if (result.error) throw result.error;
@@ -35,6 +36,20 @@ describe("published package", () => {
 		expect(config.cacheWriteReadRatio).toBe(12.5);
 		expect(config.evidencePreservingReducerProvider).toBe("provider-id");
 		expect(config.evidencePreservingReducerModel).toBe("model-id");
+	});
+
+	it("declares the minimum Pi API version used by the extension", () => {
+		const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+			peerDependencies: Record<string, string>;
+		};
+		for (const packageName of [
+			"@earendil-works/pi-agent-core",
+			"@earendil-works/pi-ai",
+			"@earendil-works/pi-coding-agent",
+			"@earendil-works/pi-tui",
+		]) {
+			expect(packageJson.peerDependencies[packageName]).toBe(">=0.84.2 <0.86.0");
+		}
 	});
 
 	it("contains the standalone entrypoint and no Pi monorepo source", () => {
