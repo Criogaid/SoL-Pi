@@ -8,6 +8,7 @@ import { createOnlineContextCompactExtension } from "./extension.ts";
 
 export {
 	DEFAULT_COMPACTION_ECONOMICS,
+	DEFAULT_SUBSEQUENT_COMPACTION_COOLDOWN_REQUESTS,
 	decideCompaction,
 	estimateRemainingRequests,
 	type CompactionDecision,
@@ -16,10 +17,14 @@ export {
 } from "./economics.ts";
 export {
 	BOUNDARY_COMPACTION_INSTRUCTIONS,
+	boundaryCompactionInstructions,
 	createOnlineContextCompactExtension,
 	DEFAULT_KEEP_RECENT_TOKENS,
 	DEFAULT_NATIVE_SUMMARY_TOKEN_ESTIMATE,
+	MAX_PROGRESS_EVIDENCE_BYTES,
+	estimateNativeCompactionTokens,
 	POST_COMPACTION_PLAN_REMINDER,
+	PROGRESS_EVIDENCE_HEADER,
 	type OnlineContextCompactOptions,
 	resolveKeepRecentTokens,
 } from "./extension.ts";
@@ -33,6 +38,7 @@ export {
 export {
 	initialOnlineState,
 	ONLINE_STATE_ENTRY,
+	recordCompletedPlanHandoff,
 	restoreOnlineState,
 	type OnlineState,
 	type ProgressSummary,

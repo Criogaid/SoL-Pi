@@ -19,12 +19,16 @@ export const DEFAULT_COMPACTION_ECONOMICS: CompactionEconomics = Object.freeze({
 	subsequentCompactionMargin: 1.5,
 });
 
+export const DEFAULT_SUBSEQUENT_COMPACTION_COOLDOWN_REQUESTS = 15;
+
 export type CompactionReason =
 	| "economic"
 	| "window_protection"
 	| "deferred_economic"
 	| "deferred_subsequent_margin"
 	| "deferred_carried_debt"
+	| "deferred_near_floor"
+	| "deferred_cooldown"
 	| "horizon_unavailable"
 	| "cache_ratio_unavailable"
 	| "native_not_compactable"
@@ -44,6 +48,8 @@ export type CompactionDecision = {
 	readonly writeTokens: number;
 	readonly archiveTokens: number;
 	readonly memoTokens: number;
+	/** Estimated context written after compaction, including the replacement memo. */
+	readonly postCompactionTokens: number;
 	readonly contextTokens: number;
 	readonly completedBoundaryRequestCounts: readonly number[] | null;
 	readonly requestsPerBoundaryMean: number | null;
@@ -60,6 +66,8 @@ export type CompactionDecision = {
 	readonly priorCompactionCount: number;
 	readonly carriedDebtTokens: number;
 	readonly cacheDebtRepaymentTokens: number;
+	readonly minimumSavingTokens: number;
+	readonly requestsSinceCompaction: number | null;
 	readonly compact: boolean;
 	readonly reason: CompactionReason;
 };
@@ -133,6 +141,9 @@ export function decideCompaction(input: {
 	readonly cacheDebtRepaymentTokens: number;
 	readonly cacheWriteReadRatio: number | null;
 	readonly economics: CompactionEconomics;
+	readonly minimumSavingTokens?: number;
+	readonly requestsSinceCompaction?: number | null;
+	readonly subsequentCompactionCooldownRequests?: number;
 }): CompactionDecision {
 	const horizon =
 		input.completedBoundaryRequestCounts === null
@@ -147,15 +158,16 @@ export function decideCompaction(input: {
 					averageContextTokenIncrement: input.averageContextTokenIncrement,
 				});
 	const savingTokens = input.archiveTokens - input.memoTokens;
+	const postCompactionTokens = Math.max(0, input.writeTokens - savingTokens);
 	const incrementalCacheCostRatio =
 		input.cacheWriteReadRatio === null ? null : Math.max(0, input.cacheWriteReadRatio - 1);
+	const newDebtTokens = postCompactionTokens * (incrementalCacheCostRatio ?? 0);
 	const breakevenRequests =
-		savingTokens > 0 && incrementalCacheCostRatio !== null
-			? (input.writeTokens * incrementalCacheCostRatio) / savingTokens
-			: null;
+		savingTokens > 0 && incrementalCacheCostRatio !== null ? newDebtTokens / savingTokens : null;
+	const combinedRepaymentTokens = input.cacheDebtRepaymentTokens + savingTokens;
 	const combinedBreakevenRequests =
-		savingTokens > 0 && incrementalCacheCostRatio !== null
-			? (input.carriedDebtTokens + input.writeTokens * incrementalCacheCostRatio) / savingTokens
+		savingTokens > 0 && incrementalCacheCostRatio !== null && combinedRepaymentTokens > 0
+			? (input.carriedDebtTokens + newDebtTokens) / combinedRepaymentTokens
 			: null;
 	const firstCompaction = input.priorCompactionCount === 0;
 	const effectiveHorizonRequests =
@@ -190,15 +202,26 @@ export function decideCompaction(input: {
 		!firstCompaction &&
 		horizon !== null &&
 		combinedBreakevenRequests !== null &&
-		combinedBreakevenRequests <= horizon.expectedRemainingRequests;
+		combinedBreakevenRequests * input.economics.subsequentCompactionMargin <= horizon.expectedRemainingRequests;
 	const economic = firstCompaction ? firstEconomic : baseEconomic && subsequentMarginOpen && carriedDebtGateOpen;
 	const compressible = savingTokens > 0;
-	const compact = compressible && (windowProtection || economic);
+	const minimumSavingTokens = input.minimumSavingTokens ?? 0;
+	const nearFloor = compressible && minimumSavingTokens > 0 && savingTokens < minimumSavingTokens;
+	const cooldownRequests =
+		input.subsequentCompactionCooldownRequests ?? DEFAULT_SUBSEQUENT_COMPACTION_COOLDOWN_REQUESTS;
+	const requestsSinceCompaction = input.requestsSinceCompaction ?? null;
+	const coolingDown =
+		!firstCompaction &&
+		cooldownRequests > 0 &&
+		requestsSinceCompaction !== null &&
+		requestsSinceCompaction < cooldownRequests;
+	const compact = compressible && (windowProtection || (!nearFloor && !coolingDown && economic));
 
 	return {
 		writeTokens: input.writeTokens,
 		archiveTokens: input.archiveTokens,
 		memoTokens: input.memoTokens,
+		postCompactionTokens,
 		contextTokens: input.contextTokens,
 		...(horizon ?? {
 			completedBoundaryRequestCounts: null,
@@ -217,21 +240,27 @@ export function decideCompaction(input: {
 		priorCompactionCount: input.priorCompactionCount,
 		carriedDebtTokens: input.carriedDebtTokens,
 		cacheDebtRepaymentTokens: input.cacheDebtRepaymentTokens,
+		minimumSavingTokens,
+		requestsSinceCompaction,
 		compact,
 		reason: !compressible
 			? "non_positive_saving"
 			: windowProtection
 				? "window_protection"
-				: economic
-					? "economic"
-					: horizon === null
-						? "horizon_unavailable"
-						: breakevenRequests === null
-							? "cache_ratio_unavailable"
-							: !firstCompaction && baseEconomic && !subsequentMarginOpen
-								? "deferred_subsequent_margin"
-								: !firstCompaction && baseEconomic && !carriedDebtGateOpen
-									? "deferred_carried_debt"
-									: "deferred_economic",
+				: nearFloor
+					? "deferred_near_floor"
+					: coolingDown
+						? "deferred_cooldown"
+						: economic
+							? "economic"
+							: horizon === null
+								? "horizon_unavailable"
+								: breakevenRequests === null
+									? "cache_ratio_unavailable"
+									: !firstCompaction && baseEconomic && !subsequentMarginOpen
+										? "deferred_subsequent_margin"
+										: !firstCompaction && baseEconomic && !carriedDebtGateOpen
+											? "deferred_carried_debt"
+											: "deferred_economic",
 	};
 }

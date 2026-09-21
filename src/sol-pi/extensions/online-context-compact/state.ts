@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { parsePlanSteps, type PlanStep } from "./plan.ts";
+import { parsePersistedPlanSteps, type PlanStep } from "./plan.ts";
 
 export const ONLINE_STATE_ENTRY = "sol-pi-online-context-state-v1";
 
@@ -30,6 +30,8 @@ export type OnlineState = {
 	readonly nativeCompactionCount: number;
 	readonly cacheDebtTokens: number;
 	readonly cacheDebtRepaymentTokens: number;
+	readonly lastMemoTokens: number;
+	readonly lastCompactionRequestCount: number;
 };
 
 export function initialOnlineState(): OnlineState {
@@ -47,6 +49,8 @@ export function initialOnlineState(): OnlineState {
 		nativeCompactionCount: 0,
 		cacheDebtTokens: 0,
 		cacheDebtRepaymentTokens: 0,
+		lastMemoTokens: 0,
+		lastCompactionRequestCount: 0,
 	};
 }
 
@@ -86,7 +90,7 @@ function progressSummary(value: unknown): ProgressSummary | undefined {
 function parseOnlineState(value: unknown): OnlineState | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return;
 	const record = value as Record<string, unknown>;
-	const plan = parsePlanSteps(record.plan);
+	const plan = parsePersistedPlanSteps(record.plan);
 	const pendingProgress = Array.isArray(record.pendingProgress)
 		? record.pendingProgress.map(progressSummary)
 		: undefined;
@@ -109,10 +113,16 @@ function parseOnlineState(value: unknown): OnlineState | undefined {
 		!nonNegativeInteger(record.positiveContextDeltaCount) ||
 		!nonNegativeInteger(record.nativeCompactionCount) ||
 		!finiteNonNegative(record.cacheDebtTokens) ||
-		!finiteNonNegative(record.cacheDebtRepaymentTokens)
+		!finiteNonNegative(record.cacheDebtRepaymentTokens) ||
+		(record.lastMemoTokens !== undefined && !finiteNonNegative(record.lastMemoTokens)) ||
+		(record.lastCompactionRequestCount !== undefined && !nonNegativeInteger(record.lastCompactionRequestCount))
 	) {
 		return;
 	}
+	const lastMemoTokens = finiteNonNegative(record.lastMemoTokens) ? record.lastMemoTokens : 0;
+	const lastCompactionRequestCount = nonNegativeInteger(record.lastCompactionRequestCount)
+		? Math.min(record.lastCompactionRequestCount, record.requestCount)
+		: 0;
 	return {
 		version: 1,
 		epoch: record.epoch,
@@ -127,6 +137,8 @@ function parseOnlineState(value: unknown): OnlineState | undefined {
 		nativeCompactionCount: record.nativeCompactionCount,
 		cacheDebtTokens: record.cacheDebtTokens,
 		cacheDebtRepaymentTokens: record.cacheDebtRepaymentTokens,
+		lastMemoTokens,
+		lastCompactionRequestCount,
 	};
 }
 
@@ -175,19 +187,41 @@ export function recordBoundary(
 
 export function recordCompaction(
 	state: OnlineState,
-	debt: { readonly debtTokens: number; readonly repaymentTokens: number },
+	debt: { readonly debtTokens: number; readonly repaymentTokens: number; readonly memoTokens?: number },
 ): OnlineState {
 	return {
 		...state,
 		epoch: state.epoch + 1,
 		plan: [],
 		pendingProgress: [],
+		lastBoundaryRequestCount: state.requestCount,
+		completedBoundaryRequestCounts: [],
 		lastContextTokens: null,
 		positiveContextDeltaTotal: 0,
 		positiveContextDeltaCount: 0,
 		nativeCompactionCount: state.nativeCompactionCount + 1,
-		cacheDebtTokens: Math.max(0, debt.debtTokens),
-		cacheDebtRepaymentTokens: Math.max(0, debt.repaymentTokens),
+		cacheDebtTokens: state.cacheDebtTokens + Math.max(0, debt.debtTokens),
+		cacheDebtRepaymentTokens: state.cacheDebtRepaymentTokens + Math.max(0, debt.repaymentTokens),
+		lastMemoTokens:
+			debt.memoTokens !== undefined && Number.isFinite(debt.memoTokens) && debt.memoTokens > 0
+				? debt.memoTokens
+				: state.lastMemoTokens,
+		lastCompactionRequestCount: state.requestCount,
+	};
+}
+
+export function recordCompletedPlanHandoff(state: OnlineState): OnlineState {
+	if (state.plan.length === 0 || state.plan.some((step) => step.status !== "completed")) return state;
+	return {
+		...state,
+		epoch: state.epoch + 1,
+		plan: [],
+		pendingProgress: [],
+		lastBoundaryRequestCount: state.requestCount,
+		completedBoundaryRequestCounts: [],
+		lastContextTokens: null,
+		positiveContextDeltaTotal: 0,
+		positiveContextDeltaCount: 0,
 	};
 }
 

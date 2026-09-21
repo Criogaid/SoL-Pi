@@ -9,6 +9,7 @@ import {
 	ONLINE_STATE_ENTRY,
 	recordBoundary,
 	recordCompaction,
+	recordCompletedPlanHandoff,
 	recordCorrection,
 	recordProviderRequest,
 	restoreOnlineState,
@@ -45,6 +46,8 @@ describe("Online Context Compact state snapshots", () => {
 			nativeCompactionCount: 0,
 			cacheDebtTokens: 0,
 			cacheDebtRepaymentTokens: 0,
+			lastMemoTokens: 0,
+			lastCompactionRequestCount: 0,
 		});
 	});
 
@@ -56,6 +59,20 @@ describe("Online Context Compact state snapshots", () => {
 		manager.appendCustomEntry(ONLINE_STATE_ENTRY, { version: 1, plan: "broken" });
 
 		expect(restoreOnlineState(manager.entries)).toEqual(state);
+	});
+
+	it("resets an oversized legacy plan without rolling back the latest accounting", () => {
+		const manager = new FakeSessionManager();
+		const pi = new FakePi(manager);
+		const legacy = {
+			...recordProviderRequest(initialOnlineState(), 1_000),
+			plan: [{ id: "legacy", goal: "g".repeat(1_001), status: "in_progress" as const }],
+			cacheDebtTokens: 900,
+			cacheDebtRepaymentTokens: 300,
+		};
+		appendOnlineState(pi.asExtensionApi(), legacy);
+
+		expect(restoreOnlineState(manager.entries)).toEqual({ ...legacy, plan: [] });
 	});
 
 	it("counts requests, positive context growth, and cache-debt repayment", () => {
@@ -93,15 +110,53 @@ describe("Online Context Compact state snapshots", () => {
 
 	it("starts a clean epoch after native compaction and carries its cache debt", () => {
 		const before = recordBoundary(recordProviderRequest(initialOnlineState(), 5_000), PLAN, PROGRESS);
-		const after = recordCompaction(before, { debtTokens: 1_200, repaymentTokens: 300 });
+		const after = recordCompaction(before, { debtTokens: 1_200, repaymentTokens: 300, memoTokens: 6_200 });
 
 		expect(after).toMatchObject({
 			epoch: 1,
+			plan: [],
 			pendingProgress: [],
+			completedBoundaryRequestCounts: [],
+			lastBoundaryRequestCount: before.requestCount,
 			nativeCompactionCount: 1,
 			cacheDebtTokens: 1_200,
 			cacheDebtRepaymentTokens: 300,
+			lastMemoTokens: 6_200,
+			lastCompactionRequestCount: before.requestCount,
 		});
+	});
+
+	it("restores snapshots that predate lastMemoTokens and lastCompactionRequestCount", () => {
+		const manager = new FakeSessionManager();
+		const pi = new FakePi(manager);
+		const current = recordBoundary(recordProviderRequest(initialOnlineState(), 100), PLAN, PROGRESS);
+		const { lastMemoTokens: _memo, lastCompactionRequestCount: _count, ...legacy } = current;
+		appendOnlineState(pi.asExtensionApi(), current);
+		manager.appendCustomEntry(ONLINE_STATE_ENTRY, legacy);
+
+		expect(restoreOnlineState(manager.entries)).toEqual({
+			...legacy,
+			lastMemoTokens: 0,
+			lastCompactionRequestCount: 0,
+		});
+	});
+
+	it("starts a new request horizon after a completed plan is handed to a new user turn", () => {
+		const completed = [
+			{ id: "inspect", goal: "inspect the implementation", status: "completed" as const },
+			{ id: "verify", goal: "verify the change", status: "completed" as const },
+		];
+		const before = recordBoundary(recordProviderRequest(initialOnlineState(), 5_000), completed, PROGRESS);
+		expect(recordCompletedPlanHandoff(before)).toMatchObject({
+			epoch: 1,
+			plan: [],
+			completedBoundaryRequestCounts: [],
+			lastBoundaryRequestCount: before.requestCount,
+			nativeCompactionCount: 0,
+			lastMemoTokens: 0,
+		});
+		const open = recordBoundary(recordProviderRequest(initialOnlineState(), 5_000), PLAN, PROGRESS);
+		expect(recordCompletedPlanHandoff(open)).toBe(open);
 	});
 
 	it("drops stale plan history when the user corrects an active run", () => {
