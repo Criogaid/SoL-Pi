@@ -9,13 +9,35 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const queueTails = new Map<string, Promise<void>>();
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/gu;
+const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i;
 
-function stripToolPathPrefix(filePath: string): string {
-	return filePath.startsWith("@") ? filePath.slice(1) : filePath;
+function normalizeToolPath(filePath: string): string {
+	const normalized = filePath.replace(UNICODE_SPACES, " ");
+	return normalized.startsWith("@") ? normalized.slice(1) : normalized;
+}
+
+/**
+ * Git Bash, MSYS, Cygwin, and WSL hand Pi paths like `/c/src/app.ts`. On
+ * Windows, Pi's built-in mutation tools convert those to a native drive path
+ * before touching the filesystem, so the queue and hash guard must convert them
+ * the same way or they address a file the mutation never wrote.
+ */
+export function normalizeWindowsShellPath(filePath: string): string {
+	if (process.platform !== "win32") return filePath;
+	if (!filePath.startsWith("/") || filePath.startsWith("//") || filePath.includes("\\")) return filePath;
+	const match = WINDOWS_SHELL_DRIVE.exec(filePath);
+	if (!match?.[1]) return filePath;
+	return `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
 }
 
 export function resolveToolPath(cwd: string, filePath: string): string {
-	const stripped = stripToolPathPrefix(filePath);
+	if (typeof filePath !== "string" || filePath.length === 0) {
+		// Validation upstream does not guarantee `path` on every host shim; fail
+		// with a tool-visible error instead of a TypeError deep in string handling.
+		throw new Error("write/edit tool input is invalid. `path` must be the target file path.");
+	}
+	const stripped = normalizeWindowsShellPath(normalizeToolPath(filePath));
 	// Pi accepts file URLs; the queue and hash guard must use the same target.
 	const expanded = stripped.startsWith("file://") ? fileURLToPath(stripped) : stripped;
 	if (expanded === "~") return homedir();
