@@ -14,9 +14,14 @@ import {
 	createEvidencePreservingReducerExtension,
 	DIAGNOSTIC_COMMAND,
 	loadReducerConfig,
+	reduceToolResult,
 	REDUCER_RECEIPT_SCHEMA,
+	validateReceipt,
 } from "../src/sol-pi/extensions/evidence-preserving-reducer/index.ts";
 import { archiveBody } from "../src/sol-pi/extensions/evidence-preserving-reducer/archive.ts";
+import { LIKELY_SECRET } from "../src/sol-pi/extensions/evidence-preserving-reducer/config.ts";
+import { ReceiptCache } from "../src/sol-pi/extensions/evidence-preserving-reducer/cache.ts";
+import * as receiptModule from "../src/sol-pi/extensions/evidence-preserving-reducer/receipt.ts";
 import {
 	callReducer,
 	type CompatComplete,
@@ -181,6 +186,180 @@ function load(
 }
 
 describe("evidence-preserving reducer", () => {
+	describe("verified receipt reuse", () => {
+		const signal = "ERROR test target failed";
+		const body = `${signal}\n${"diagnostic output\n".repeat(400)}`;
+		const validReceipt = (input: string): ModelReceipt => ({
+			schema: REDUCER_RECEIPT_SCHEMA,
+			source_sha256: sourceHash(input),
+			status: input.includes("is_error=true") ? "failure" : "success",
+			uncertain: false,
+			evidence: [
+				{ kind: "failure", quote: signal },
+				{ kind: "summary", quote: "diagnostic output" },
+			],
+		});
+
+		it("reduces three identical logs once and charges no model usage for cache hits", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const { context, manager, pi } = load(await storeRoot(), complete);
+			// Control: the same reduction path without a cache makes three calls.
+			const config = loadReducerConfig(runtimeRoot(context));
+			for (let index = 0; index < 3; index++) {
+				await reduceToolResult(() => {}, config, bashEvent(body), context);
+			}
+			expect(complete).toHaveBeenCalledTimes(3);
+			complete.mockClear();
+			for (let index = 0; index < 3; index++) {
+				const result = await pi.emit("tool_result", bashEvent(body, { toolCallId: `call-${index}` }), context) as {
+					content: { text: string }[];
+				};
+				expect(result.content[0]?.text).toContain(`quote=${JSON.stringify(signal)}`);
+				if (index > 0) expect(result.content[0]?.text).toContain("reducer_total_tokens=0");
+			}
+			expect(complete).toHaveBeenCalledTimes(1);
+			const events = manager.customEntryData();
+			expect(events.filter((entry) => entry.kind === "provider_response")).toHaveLength(1);
+			expect(events.filter((entry) => entry.kind === "cache_hit")).toHaveLength(2);
+			const applied = events.filter((entry) => entry.kind === "applied");
+			expect(applied.map((entry) => entry.cacheHit)).toEqual([false, true, true]);
+			for (const entry of applied.slice(1)) {
+				expect(entry.usage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 });
+			}
+		});
+
+		it("invalidates cached evidence when reducer instructions change", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const { context, pi } = load(await storeRoot(), complete);
+			await pi.emit("tool_result", bashEvent(body), context);
+			const original = receiptModule.reducerInstructions();
+			const instructions = vi.spyOn(receiptModule, "reducerInstructions").mockReturnValue(`${original}\nUpdated rules`);
+			try {
+				await pi.emit("tool_result", bashEvent(body), context);
+				expect(complete).toHaveBeenCalledTimes(2);
+			} finally {
+				instructions.mockRestore();
+			}
+		});
+
+		it("does not cache a verified receipt that is larger than the source", async () => {
+			const lines = Array.from({ length: 12 }, (_, index) => `ERROR ${index}: ${"x".repeat(400)}`);
+			const largeBody = lines.join("\n");
+			const complete = vi.fn(modelComplete(largeBody, (input) => ({
+				...validReceipt(input), evidence: lines.map((quote) => ({ kind: "failure", quote })),
+			})));
+			const { context, manager, pi } = load(await storeRoot(), complete);
+			expect(await pi.emit("tool_result", bashEvent(largeBody), context)).toBeUndefined();
+			expect(await pi.emit("tool_result", bashEvent(largeBody), context)).toBeUndefined();
+			expect(complete).toHaveBeenCalledTimes(2);
+			expect(manager.customEntryData().filter((entry) => entry.reason === "receipt-not-smaller")).toHaveLength(2);
+		});
+
+		it.each(["body", "command", "status", "provider", "model", "output-limit"])(
+			"makes a new request when %s changes",
+			async (field) => {
+				const complete = vi.fn(modelComplete(body, validReceipt));
+				const root = await storeRoot();
+				const { context } = load(root, complete, ACTIVE_MODEL, {
+					modelRegistry: {
+						find: (provider: string, id: string) => ({ ...REDUCER_MODEL, provider, id }),
+						complete,
+					} as unknown as ExtensionContext["modelRegistry"],
+				});
+				const config = loadReducerConfig(root);
+				const cache = new ReceiptCache();
+				const changedConfig = {
+					...config,
+					...(field === "provider" ? { reducerProvider: "another-provider" } : {}),
+					...(field === "model" ? { reducerModel: "another-model" } : {}),
+					...(field === "output-limit" ? { maxOutputTokens: 1024 } : {}),
+				};
+				const changedEvent = bashEvent(field === "body" ? `${body}diagnostic output\n` : body, {
+					...(field === "command" ? { input: { command: "pytest -x" } } : {}),
+					...(field === "status" ? { isError: false } : {}),
+				});
+				expect(await reduceToolResult(() => {}, config, bashEvent(body), context, cache)).toBeDefined();
+				expect(await reduceToolResult(() => {}, changedConfig, changedEvent, context, cache)).toBeDefined();
+				expect(complete).toHaveBeenCalledTimes(2);
+			},
+		);
+
+		it("keeps caches isolated by session and extension instance", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const root = await storeRoot();
+			const first = load(root, complete);
+			await first.pi.emit("tool_result", bashEvent(body), first.context);
+			const otherSession = load(await storeRoot(), complete);
+			await first.pi.emit("tool_result", bashEvent(body), otherSession.context);
+			const restarted = load(root, complete);
+			await restarted.pi.emit("tool_result", bashEvent(body), restarted.context);
+			expect(complete).toHaveBeenCalledTimes(3);
+		});
+
+		it("does not cache invalid evidence and retries the next occurrence", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			complete.mockImplementationOnce(modelComplete(body, (input) => ({
+				...validReceipt(input), evidence: [{ kind: "failure", quote: "invented evidence" }],
+			})));
+			const { context, pi } = load(await storeRoot(), complete);
+			expect(await pi.emit("tool_result", bashEvent(body), context)).toBeUndefined();
+			expect(await pi.emit("tool_result", bashEvent(body), context)).toBeDefined();
+			expect(await pi.emit("tool_result", bashEvent(body), context)).toBeDefined();
+			expect(complete).toHaveBeenCalledTimes(2);
+		});
+
+		it("does not cache provider errors", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			complete.mockRejectedValueOnce(new Error("provider unavailable"));
+			const { context, pi } = load(await storeRoot(), complete);
+			expect(await pi.emit("tool_result", bashEvent(body), context)).toBeUndefined();
+			expect(await pi.emit("tool_result", bashEvent(body), context)).toBeDefined();
+			expect(complete).toHaveBeenCalledTimes(2);
+		});
+
+		it("rechecks the archive before reusing a receipt", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const { context, manager, pi } = load(await storeRoot(), complete);
+			await pi.emit("tool_result", bashEvent(body), context);
+			const candidate = manager.customEntryData().find((entry) => entry.kind === "candidate");
+			await writeFile(String(candidate?.sourcePath), "corrupted archive");
+			await expect(pi.emit("tool_result", bashEvent(body), context)).rejects.toThrow("integrity failure");
+			expect(complete).toHaveBeenCalledTimes(1);
+		});
+
+		it("reuses evidence while preserving the current fused write result", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const { context, pi } = load(await storeRoot(), complete);
+			await pi.emit("tool_result", fusedEvent(body, false), context);
+			const next = fusedEvent(body, false);
+			next.content[0] = { type: "text", text: "Successfully wrote another file" };
+			next.details = { patch: "new patch" };
+			const result = await pi.emit("tool_result", next, context) as {
+				content: { text: string }[]; details: Record<string, unknown>;
+			};
+			expect(result.content[0]?.text).toBe("Successfully wrote another file");
+			expect(result.content[1]?.text).toContain("reducer_total_tokens=0");
+			expect(result.details.patch).toBe("new patch");
+			expect(complete).toHaveBeenCalledTimes(1);
+		});
+
+		it("evicts the least recently used receipt at the session capacity", async () => {
+			const complete = vi.fn(modelComplete(body, validReceipt));
+			const { context, pi } = load(await storeRoot(), complete);
+			const cacheEvent = (index: number) => bashEvent(body, { input: { command: `pytest -q case-${index}` } });
+			for (let index = 0; index < 64; index++) {
+				await pi.emit("tool_result", cacheEvent(index), context);
+			}
+			await pi.emit("tool_result", cacheEvent(0), context);
+			expect(complete).toHaveBeenCalledTimes(64);
+			await pi.emit("tool_result", cacheEvent(64), context);
+			await pi.emit("tool_result", cacheEvent(0), context);
+			expect(complete).toHaveBeenCalledTimes(65);
+			await pi.emit("tool_result", cacheEvent(1), context);
+			expect(complete).toHaveBeenCalledTimes(66);
+		});
+	});
+
 	it("registers without an extension-specific credential", () => {
 		const pi = new FakePi();
 		expect(() => createEvidencePreservingReducerExtension()(pi.asExtensionApi())).not.toThrow();
@@ -198,7 +377,7 @@ describe("evidence-preserving reducer", () => {
 				source_sha256: sourceHash(input),
 				status: "failure",
 				uncertain: false,
-				evidence: [{ kind: "failure", quote: signal }],
+				evidence: [{ kind: "failure", quote: `${signal}\ndiagnostic output` }],
 			})),
 		);
 
@@ -225,6 +404,208 @@ describe("evidence-preserving reducer", () => {
 		expect(DIAGNOSTIC_COMMAND.test("rg test src")).toBe(false);
 	});
 
+	it("recognises password and private-key material as likely secrets", () => {
+		for (const line of [
+			"api_key=abc123",
+			"Authorization: Bearer abc",
+			"AWS_SECRET_ACCESS_KEY=abc",
+			"PGPASSWORD=hunter2",
+			"db_password: hunter2",
+			'  "password": "hunter2"',
+			"passphrase = hunter2",
+			"private key: MIIEvQIBADAN",
+			"-----BEGIN OPENSSH PRIVATE KEY-----",
+			"-----BEGIN RSA PRIVATE KEY-----",
+			"-----BEGIN ENCRYPTED PRIVATE KEY-----",
+		]) {
+			expect([line, LIKELY_SECRET.test(line)]).toEqual([line, true]);
+		}
+		// Ordinary diagnostic output must stay reducible.
+		for (const line of [
+			"-----BEGIN CERTIFICATE-----",
+			"FAILED tests/test_auth.py::test_password_reset",
+			"assert password_hash == expected_hash",
+			"  password_policy_enabled = True",
+			"E   AssertionError: expected 4 but received 5",
+		]) {
+			expect([line, LIKELY_SECRET.test(line)]).toEqual([line, false]);
+		}
+	});
+
+	it("falls back instead of sending a private key to the reducer model", async () => {
+		const root = await storeRoot();
+		const body = [
+			"FAILED tests/test_deploy.py::test_signing_key",
+			"-----BEGIN OPENSSH PRIVATE KEY-----",
+			"b3BlbnNzaC1rZXktdjEAAAAA".repeat(200),
+			"-----END OPENSSH PRIVATE KEY-----",
+			"1 failed in 0.42s",
+		].join("\n");
+		const complete = vi.fn();
+		const { context, manager, pi } = load(root, complete as unknown as Complete);
+
+		const result = await pi.emit("tool_result", bashEvent(body), context);
+
+		expect(result).toBeUndefined();
+		expect(complete).not.toHaveBeenCalled();
+		expect(manager.customEntryData()).toEqual([
+			expect.objectContaining({ kind: "fallback", reason: "likely-secret" }),
+		]);
+	});
+
+	it("admits only the diagnostic cargo subcommands", () => {
+		for (const command of [
+			"cargo build",
+			"cargo test",
+			"cargo check",
+			"cargo build --release",
+			"cargo +nightly test",
+			"cd repo && cargo build",
+		]) {
+			expect([command, DIAGNOSTIC_COMMAND.test(command)]).toEqual([command, true]);
+		}
+		for (const command of [
+			"cargo",
+			"cargo fmt",
+			"cargo clippy",
+			"cargo run",
+			"cargo publish",
+			"cargo login",
+			"cargo install cargo-nextest",
+			"cargo login cargo test",
+			"cargo install cargo test",
+			"cargo publish --package cargo test",
+			"cargo --color test",
+			"cargo --color= test",
+			"cargo --color sometimes test",
+			"cargo --color=sometimes test",
+			"cargo --config test",
+			"cargo --config= test",
+			"echo cargo test",
+		]) {
+			expect([command, DIAGNOSTIC_COMMAND.test(command)]).toEqual([command, false]);
+		}
+	});
+
+	it.each([
+		"cargo publish",
+		"cargo login # pytest -q",
+		"echo '# pytest -q'",
+		String.raw`cargo "\test"`,
+	])("leaves a non-diagnostic result untouched: %s", async (command) => {
+		const root = await storeRoot();
+		const body = `Updating crates.io index\n${"compiling dependency\n".repeat(400)}`;
+		const complete = vi.fn();
+		const { context, manager, pi } = load(root, complete as unknown as Complete);
+
+		const event = bashEvent(body, { input: { command }, isError: false });
+		const result = await pi.emit("tool_result", event, context);
+
+		expect(result).toBeUndefined();
+		expect(complete).not.toHaveBeenCalled();
+		expect(manager.customEntryData()).toHaveLength(0);
+	});
+
+	it("admits Cargo global options before the diagnostic subcommand", () => {
+		for (const command of [
+			"cargo --locked test",
+			"cargo --color always check",
+			"cargo --color=always check",
+			"cargo +nightly --offline build",
+			"cargo --config net.offline=true test",
+			"cargo --config=net.offline=true test",
+			"cargo -vv -Z unstable-options -C repo check",
+			"CARGO_TERM_COLOR=always cargo --frozen test",
+			"cargo login; cargo test",
+		]) {
+			expect([command, DIAGNOSTIC_COMMAND.test(command)]).toEqual([command, true]);
+		}
+	});
+
+	it("checks adversarial Cargo option input within a bounded time", () => {
+		const command = `cargo ${"--color ".repeat(35)}publish`;
+		const startedAt = performance.now();
+
+		expect(DIAGNOSTIC_COMMAND.test(command)).toBe(false);
+		expect(performance.now() - startedAt).toBeLessThan(250);
+	});
+
+	it("preserves quoted empty Cargo option values and shell comments", () => {
+		expect(DIAGNOSTIC_COMMAND.test("cargo test # cargo publish")).toBe(true);
+		for (const command of [
+			"cargo -C '' publish test",
+			"cargo --config '' login test",
+			"cargo -Z '' login test",
+			"cargo login # ; cargo test",
+		]) {
+			expect([command, DIAGNOSTIC_COMMAND.test(command)]).toEqual([command, false]);
+		}
+	});
+
+	it.each([
+		"cargo login # pytest -q",
+		"echo '# pytest -q'",
+		"echo pytest -q",
+		"cargo login pytest -q",
+		'"python -m pytest"',
+		'npm "test extra"',
+		'npm "test\0extra"',
+		String.raw`cargo "\test"`,
+		String.raw`cargo "\\test"`,
+	])("rejects diagnostic names in shell data: %s", (command) => {
+		expect(DIAGNOSTIC_COMMAND.test(command)).toBe(false);
+	});
+
+	it("recognizes diagnostic tokens after shell parsing", () => {
+		for (const command of [
+			"cd repo && pytest -q",
+			"MODE=test python3 -m pytest",
+			"echo '# ignored'; npm test",
+			"cargo login # ignored\npytest -q",
+			'cargo "te"st',
+			'cargo "te\\\nst"',
+			"cargo te\\\nst",
+		]) {
+			expect([command, DIAGNOSTIC_COMMAND.test(command)]).toEqual([command, true]);
+		}
+	});
+
+	it("counts a trailing newline as a line terminator, not an extra line", async () => {
+		const root = await storeRoot();
+
+		expect((await archiveBody(root, "")).lines).toBe(0);
+		expect((await archiveBody(root, "only line\n")).lines).toBe(1);
+		expect((await archiveBody(root, "line1\nline2")).lines).toBe(2);
+		expect((await archiveBody(root, "line1\nline2\n")).lines).toBe(2);
+		expect((await archiveBody(root, "line1\n\n")).lines).toBe(2);
+	});
+
+	it("reports the archived line count the frontier agent can verify", async () => {
+		const root = await storeRoot();
+		const signal = "ERROR target failed";
+		// 401 lines, newline-terminated, as a real command writes it.
+		const body = `${signal}\n${"diagnostic output\n".repeat(400)}`;
+		const { context, pi } = load(
+			root,
+			modelComplete(body, (input) => ({
+				schema: REDUCER_RECEIPT_SCHEMA,
+				source_sha256: sourceHash(input),
+				status: "failure",
+				uncertain: false,
+				evidence: [
+					{ kind: "failure", quote: signal },
+					{ kind: "summary", quote: "diagnostic output" },
+				],
+			})),
+		);
+
+		const result = (await pi.emit("tool_result", bashEvent(body), context)) as {
+			content: { type: string; text: string }[];
+		};
+
+		expect(result.content[0]?.text ?? "").toContain("source_lines=401");
+	});
+
 	it("loads a configured reducer provider/model route", async () => {
 		const root = await storeRoot();
 		const config = loadReducerConfig(root, {
@@ -240,7 +621,7 @@ describe("evidence-preserving reducer", () => {
 		vi.useFakeTimers();
 		const root = await storeRoot();
 		const fatal = "E   AssertionError: expected 4 but received 5";
-		const body = ["pytest session starts", fatal, "FAILED tests/test_math.py::test_addition", ".".repeat(6000)].join(
+		const body = ["pytest session starts", fatal, "FAILED tests/test_math.py::test_addition", "progress\n".repeat(750)].join(
 			"\n",
 		);
 		let call: CapturedCall | undefined;
@@ -258,6 +639,8 @@ describe("evidence-preserving reducer", () => {
 					evidence: [
 						{ kind: "failure", quote: fatal },
 						{ kind: "target", quote: "FAILED tests/test_math.py::test_addition" },
+						{ kind: "summary", quote: "pytest session starts" },
+						{ kind: "summary", quote: "progress" },
 					],
 				}),
 				"stop",
@@ -293,7 +676,7 @@ describe("evidence-preserving reducer", () => {
 		const localSourcePath = relative(join(runtimeRoot(context), "evidence-preserving-reducer"), sourcePath);
 		expect(localSourcePath.length > 0 && !localSourcePath.startsWith("..") && !isAbsolute(localSourcePath)).toBe(true);
 		expect(await readFile(sourcePath, "utf8")).toBe(body);
-		expect((await stat(sourcePath)).mode & 0o777).toBe(0o600);
+		if (process.platform !== "win32") expect((await stat(sourcePath)).mode & 0o777).toBe(0o600);
 		expect(events.filter((entry) => entry.kind === "applied")).toHaveLength(1);
 		expect(notify).toHaveBeenCalledTimes(1);
 		expect(notify.mock.calls[0]?.[0]).toMatch(
@@ -365,7 +748,7 @@ describe("evidence-preserving reducer", () => {
 					source_sha256: sourceHash(input),
 					status: failed ? "failure" : "success",
 					uncertain: false,
-					evidence: [{ kind: failed ? "failure" : "summary", quote: signal }],
+					evidence: [{ kind: failed ? "failure" : "summary", quote: failed ? `${signal}\ndiagnostic output` : signal }],
 				})),
 			);
 
@@ -379,7 +762,7 @@ describe("evidence-preserving reducer", () => {
 			expect(projected).toMatch(/Successfully wrote 12 bytes to target\.ts/u);
 			expect(projected).toMatch(failed ? /\[then_run:failed\]/u : /\[then_run:succeeded\]/u);
 			expect(projected).toMatch(/sol_pi_evidence_receipt_v1/u);
-			expect(projected).not.toContain("diagnostic output");
+			expect(Buffer.byteLength(projected)).toBeLessThan(Buffer.byteLength(body));
 			expect(result.isError).toBe(failed);
 			expect(result.details.patch).toBe("test patch");
 			const candidate = manager.customEntryData().find((entry) => entry.kind === "candidate");
@@ -416,6 +799,122 @@ describe("evidence-preserving reducer", () => {
 					: entry.reason === "unverifiable-quote",
 			),
 		).toBe(true);
+	});
+
+	it.each(["failure", "fatal"].flatMap((kind) =>
+		["build started", "0 errors reported", "no failures", "timeout disabled", "assertions passed"].map((quote) => ({ kind, quote })),
+	))("fails open when '$quote' is labeled $kind and omits the fatal error", async ({ kind, quote }) => {
+		const root = await storeRoot();
+		const body = `${quote}\nfatal: missing symbol x\n${"diagnostic output\n".repeat(400)}`;
+		const { context, manager, pi } = load(
+			root,
+			modelComplete(body, (input) => ({
+				schema: REDUCER_RECEIPT_SCHEMA,
+				source_sha256: sourceHash(input),
+				status: "failure",
+				uncertain: false,
+				evidence: [{ kind, quote }, { kind: "summary", quote: "diagnostic output" }],
+			})),
+		);
+
+		expect(await pi.emit("tool_result", bashEvent(body), context)).toBeUndefined();
+		expect(manager.customEntryData()).toContainEqual(
+			expect.objectContaining({ kind: "fallback", reason: "missing-failure-evidence" }),
+		);
+	});
+
+	it.each([
+		{ body: "fatal: missing symbol x", quotes: ["fatal"] },
+		{ body: "error: first\nfatal: second", quotes: ["error: first"] },
+		{ body: "no fatal errors were reported\nfatal: missing symbol x", quotes: ["fatal errors", "fatal: missing symbol x"] },
+		{ body: "fatal: first\nfatal: second", quotes: ["fatal: first\nfatal:", "second"] },
+		{ body: "ERROR:\n  missing symbol x", quotes: ["ERROR:", "missing symbol x"] },
+	])("rejects incomplete candidate failure lines (%#)", async ({ body, quotes }) => {
+		const archive = await archiveBody(await storeRoot(), body);
+		const raw = JSON.stringify({
+			schema: REDUCER_RECEIPT_SCHEMA, source_sha256: archive.hash, status: "failure", uncertain: false,
+			evidence: quotes.map((quote) => ({ kind: "failure", quote })),
+		});
+		expect(validateReceipt(raw, archive, body, true)).toEqual({ ok: false, reason: "missing-failure-evidence" });
+	});
+
+	it.each([
+		{ diagnostic: "FATAL errors were not reported\nSegmentation fault", quote: "FATAL errors were not reported", uncertain: false },
+		{ diagnostic: "0 errors reported\n/usr/bin/ld: undefined reference to symbol_x", quote: "0 errors reported", uncertain: false },
+		{ diagnostic: "构建开始\n链接失败：缺少符号 x", quote: "构建开始", uncertain: false },
+		{ diagnostic: "ERROR:\n  missing symbol x", quote: "ERROR:", uncertain: false },
+		{ diagnostic: "Process terminated with exit code 137", quote: "", uncertain: false },
+		{ diagnostic: "fatal: missing symbol x", quote: "fatal: missing symbol x", uncertain: true },
+		{ diagnostic: "fatal: missing symbol x\n" + "x".repeat(601), quote: "fatal: missing symbol x", uncertain: false },
+	])("preserves original output when a failed receipt omits content or is uncertain (%#)", async ({ diagnostic, quote, uncertain }) => {
+		const root = await storeRoot();
+		const body = `${diagnostic}\n${"progress\n".repeat(1000)}`;
+		const evidence = [{ kind: "summary", quote: "progress" }];
+		if (quote) evidence.push({ kind: "failure", quote });
+		const { context, manager, pi } = load(root, modelComplete(body, (input) => ({
+			schema: REDUCER_RECEIPT_SCHEMA,
+			source_sha256: sourceHash(input),
+			status: "failure",
+			uncertain,
+			evidence,
+		})));
+		expect(await pi.emit("tool_result", bashEvent(body), context)).toBeUndefined();
+		expect(manager.customEntryData()).toContainEqual(
+			expect.objectContaining({ kind: "fallback", reason: uncertain ? "uncertain-failure-evidence" : "missing-failure-evidence" }),
+		);
+		expect(manager.customEntryData().some((entry) => entry.kind === "applied")).toBe(false);
+	});
+
+	it.each(["构建失败：缺少文件", "Segmentation fault", "FATAL errors were not reported\nSegmentation fault", "ERROR:\n  missing symbol x"])(
+		"preserves all distinct lines without interpreting their meaning: %s", async (diagnostic) => {
+			const root = await storeRoot();
+			const body = `${diagnostic}\n${"progress\n".repeat(1000)}`;
+			const { context, manager, pi } = load(root, modelComplete(body, (input) => ({
+				schema: REDUCER_RECEIPT_SCHEMA,
+				source_sha256: sourceHash(input),
+				status: "failure",
+				uncertain: false,
+				evidence: [{ kind: "summary", quote: `${diagnostic}\nprogress` }],
+			})));
+			const result = await pi.emit("tool_result", bashEvent(body), context) as { isError: boolean };
+			expect(result.isError).toBe(true);
+			expect(manager.customEntryData().some((entry) => entry.kind === "applied")).toBe(true);
+		},
+	);
+
+	it.each(["", " \t\n\r\n"])("rejects a failed receipt with no nonblank source content (%#)", async (body) => {
+		const archive = await archiveBody(await storeRoot(), body);
+		const raw = JSON.stringify({
+			schema: REDUCER_RECEIPT_SCHEMA, source_sha256: archive.hash, status: "failure", uncertain: false, evidence: [],
+		});
+		expect(validateReceipt(raw, archive, body, true)).toEqual({ ok: false, reason: "missing-failure-evidence" });
+	});
+
+	it("keeps successful receipts independent of the failure-evidence policy", async () => {
+		const body = "0 errors reported";
+		const archive = await archiveBody(await storeRoot(), body);
+		const raw = JSON.stringify({
+			schema: REDUCER_RECEIPT_SCHEMA, source_sha256: archive.hash, status: "success", uncertain: true,
+			evidence: [{ kind: "summary", quote: body }],
+		});
+		expect(validateReceipt(raw, archive, body, false).ok).toBe(true);
+	});
+
+	it.each(["\n", "\r\n"])("accepts complete nonblank lines across evidence kinds (newline=%j)", async (newline) => {
+		const lines = ["0 errors reported", "fatal: missing symbol x", "FAILED test_link", "fatal: missing symbol x"];
+		const body = ["build started", ...lines, "build ended"].join(newline);
+		const archive = await archiveBody(await storeRoot(), body);
+		const raw = JSON.stringify({
+			schema: REDUCER_RECEIPT_SCHEMA, source_sha256: archive.hash, status: "failure", uncertain: false,
+			evidence: [
+				{ kind: "summary", quote: lines.slice(0, 2).join(newline) },
+				{ kind: "target", quote: lines[2] },
+				{ kind: "fatal", quote: lines[3] },
+				{ kind: "summary", quote: "build started" },
+				{ kind: "summary", quote: "build ended" },
+			],
+		});
+		expect(validateReceipt(raw, archive, body, true).ok).toBe(true);
 	});
 
 	it("fails open when Pi cannot complete the nested model call", async () => {
@@ -521,6 +1020,25 @@ describe("evidence-preserving reducer", () => {
 		);
 		expect(input).toContain(inlineBody);
 		expect(input).not.toContain("ERROR outside file");
+	});
+
+	it.each(["bash", "write", "edit"])("keeps oversized %s logs out of the reducer", async (toolName) => {
+		const root = await storeRoot();
+		const outputPath = join(tmpdir(), `pi-bash-${randomUUID()}.log`);
+		cleanupPaths.push(outputPath);
+		await writeFile(outputPath, "x".repeat(2_000_000));
+		const complete = vi.fn(async () => { throw new Error("unexpected model call"); });
+		const { context, manager, pi } = load(root, complete);
+		const preview = `ERROR truncated\n${"x".repeat(5000)}\n[Full output: ${outputPath}]`;
+		const event = toolName === "bash" ? bashEvent(preview) : { ...fusedEvent(preview, true), toolName };
+		expect(await pi.emit("tool_result", {
+			...event, details: toolName === "bash" ? { fullOutputPath: outputPath } : {},
+		}, context)).toBeUndefined();
+		expect(complete).not.toHaveBeenCalled();
+		expect(manager.customEntryData()).toContainEqual(
+			expect.objectContaining({ kind: "fallback", reason: "source-unavailable-or-over-max-chars", maxChars: 600_000 }),
+		);
+		expect(manager.customEntryData().some((entry) => entry.kind === "candidate")).toBe(false);
 	});
 
 	it("does not delegate small or non-diagnostic output", async () => {

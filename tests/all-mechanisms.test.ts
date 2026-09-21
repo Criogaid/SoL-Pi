@@ -98,7 +98,7 @@ describe("SoL-Pi entrypoint", () => {
 
 		expect(loader).toHaveBeenCalledOnce();
 		expect(pi.registeredTools.map((tool) => tool.name)).toEqual(["obs_recall"]);
-		expect([...pi.handlers.keys()].sort()).toEqual(["context", "session_start"]);
+		expect([...pi.handlers.keys()].sort()).toEqual(["context", "session_shutdown", "session_start"]);
 	});
 
 	it("passes the configured reducer provider/model route into EPR", async () => {
@@ -130,7 +130,7 @@ describe("SoL-Pi entrypoint", () => {
 										source_sha256: sourceHash(input),
 										status: "failure",
 										uncertain: false,
-										evidence: [{ kind: "failure", quote: "ERROR configured reducer failure" }],
+										evidence: [{ kind: "failure", quote: "ERROR configured reducer failure\ndiagnostic line" }],
 									}),
 								},
 							],
