@@ -17,6 +17,7 @@
  * Storage lives under the active Pi session directory.
  */
 
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -34,6 +35,8 @@ import {
 	isPureTextResult,
 	observationPath,
 	placeholderFor,
+	SEARCH_MAX_MATCHES,
+	searchObservation,
 	type RecallChunk,
 	readRecallChunk,
 } from "./observation.ts";
@@ -48,9 +51,21 @@ const RECALL_LIMITS = {
 	maxLines: RECALL_MAX_LINES - RECALL_HEADER_LINES,
 };
 
+function isWellFormedUnicode(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = value.charCodeAt(index + 1);
+			if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+			index += 1;
+		} else if (code >= 0xdc00 && code <= 0xdfff) return false;
+	}
+	return true;
+}
+
 export function createObservationPackExtension(): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
-		const sentCounts = new Map<string, number>();
+		const sentCounts = new Map<string, Map<string, Map<string, number>>>();
 		const ledgers = new Map<string, Ledger>();
 		const ledgerFor = (ctx: ExtensionContext): Ledger => {
 			const root = runtimeRoot(ctx);
@@ -62,22 +77,87 @@ export function createObservationPackExtension(): ExtensionFactory {
 			return ledger;
 		};
 
+		pi.on("session_shutdown", (_event, ctx) => {
+			const root = runtimeRoot(ctx);
+			sentCounts.delete(root);
+			ledgers.delete(root);
+		});
+
 		pi.registerTool({
 			name: "obs_recall",
 			label: "Recall Observation",
-			description: "Read a stored large tool result by observation id and byte offset.",
-			promptSnippet: "Recall a paged excerpt from a previously replaced large tool result",
+			description: "Read a stored large tool result by byte offset, or search it for literal UTF-8 text.",
+			promptSnippet: "Recall pages or search a replaced large tool result with obs_recall",
 			renderShell: "self",
 			parameters: Type.Object({
 				id: Type.String({ description: "Observation id from a placeholder" }),
 				offset: Type.Optional(Type.Integer({ minimum: 0, description: "Byte offset, default 0" })),
+				query: Type.Optional(Type.String({ description: "Literal UTF-8 search text (up to 256 bytes)" })),
 			}),
-			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 				if (!isObservationId(params.id)) throw new Error(`Unknown observation id: ${params.id}`);
 				const offset = params.offset ?? 0;
+				if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Offset must be a non-negative safe integer");
+				if (params.query !== undefined) {
+					if (params.query.length === 0) throw new Error("Search query must not be empty");
+					if (!isWellFormedUnicode(params.query)) throw new Error("Search query must be well-formed Unicode");
+					const query = Buffer.from(params.query, "utf8");
+					if (query.length > 256) throw new Error("Search query exceeds 256 UTF-8 bytes");
+					const activeSignal = signal ?? ctx.signal;
+					let search;
+					try {
+						search = await searchObservation(
+							observationPath(runtimeRoot(ctx), params.id),
+							query,
+							offset,
+							RECALL_MAX_BYTES - RECALL_HEADER_RESERVE_BYTES,
+							activeSignal,
+						);
+					} catch (error) {
+						if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+							throw new Error(`Unknown observation id: ${params.id}`);
+						}
+						throw error;
+					}
+					const header = [
+						`[obs_recall search id=${params.id} offset=${offset} next_offset=${search.nextOffset} eof=${search.eof}]`,
+						`[matches=${search.matches.length}/${SEARCH_MAX_MATCHES} scanned_bytes=${search.scannedBytes}; contexts are JSON strings]`,
+					].join("\n");
+					const content = `${header}\n${search.matches.map((match) => JSON.stringify(match)).join("\n")}`;
+					if (Buffer.byteLength(content, "utf8") > RECALL_MAX_BYTES || countLines(content) > RECALL_MAX_LINES) {
+						throw new Error("Recall output exceeded its hard limit");
+					}
+					const queryHash = createHash("sha256").update(query).digest("hex");
+					await ledgerFor(ctx)([
+						{
+							event: "search",
+							id: params.id,
+							offset,
+							queryHash,
+							queryBytes: query.length,
+							matches: search.matches.length,
+							scannedBytes: search.scannedBytes,
+							nextOffset: search.nextOffset,
+							eof: search.eof,
+						},
+					]);
+					return {
+						content: [{ type: "text", text: content }],
+						details: {
+							id: params.id,
+							offset,
+							matches: search.matches,
+							scannedBytes: search.scannedBytes,
+							nextOffset: search.nextOffset,
+							eof: search.eof,
+						},
+					};
+				}
 				let chunk: RecallChunk;
 				try {
-					chunk = await readRecallChunk(observationPath(runtimeRoot(ctx), params.id), offset, RECALL_LIMITS);
+					chunk = await readRecallChunk(
+						observationPath(runtimeRoot(ctx), params.id), offset, RECALL_LIMITS, ctx.sessionManager.getSessionDir(),
+					);
 				} catch (error) {
 					if (error instanceof Error && "code" in error && error.code === "ENOENT") {
 						throw new Error(`Unknown observation id: ${params.id}`);
@@ -85,27 +165,30 @@ export function createObservationPackExtension(): ExtensionFactory {
 					throw error;
 				}
 				const header = [
-					`[obs_recall id=${params.id} offset=${offset} next_offset=${chunk.nextOffset} eof=${chunk.eof}]`,
+					`[obs_recall id=${params.id} offset=${chunk.offset} next_offset=${chunk.nextOffset} eof=${chunk.eof}]`,
 					`[chunk_bytes=${chunk.bytes} chunk_lines=${chunk.lines}; use next_offset to continue]`,
 				].join("\n");
 				const content = `${header}\n${chunk.text}`;
 				if (Buffer.byteLength(content, "utf8") > RECALL_MAX_BYTES || countLines(content) > RECALL_MAX_LINES) {
 					throw new Error("Recall output exceeded its hard limit");
 				}
-				await ledgerFor(ctx)({
-					event: "recall",
-					id: params.id,
-					offset,
-					bytes: chunk.bytes,
-					lines: chunk.lines,
-					nextOffset: chunk.nextOffset,
-					eof: chunk.eof,
-				});
+				await ledgerFor(ctx)([
+					{
+						event: "recall",
+						id: params.id,
+						requestedOffset: offset,
+						offset: chunk.offset,
+						bytes: chunk.bytes,
+						lines: chunk.lines,
+						nextOffset: chunk.nextOffset,
+						eof: chunk.eof,
+					},
+				]);
 				return {
 					content: [{ type: "text", text: content }],
 					details: {
 						id: params.id,
-						offset,
+						offset: chunk.offset,
 						bytes: chunk.bytes,
 						lines: chunk.lines,
 						nextOffset: chunk.nextOffset,
@@ -115,17 +198,23 @@ export function createObservationPackExtension(): ExtensionFactory {
 			},
 			renderCall(params, theme) {
 				const offset = params.offset ?? 0;
-				const base = new Text(theme.fg("dim", `Recall ${params.id} from byte ${offset}`), 0, 0);
+				const base = new Text(
+					theme.fg("dim", params.query === undefined ? `Recall ${params.id} from byte ${offset}` : `Search ${params.id} from byte ${offset}`),
+					0,
+					0,
+				);
 				return renderSolPiTool(theme, "Observation Pack", "full observation replay avoided", base);
 			},
 			renderResult(result, { isPartial }, theme) {
-				const details = result.details as { bytes?: number; lines?: number } | undefined;
+				const details = result.details as { bytes?: number; lines?: number; matches?: readonly unknown[]; scannedBytes?: number } | undefined;
 				const base = new Text(
 					theme.fg(
 						isPartial ? "warning" : "dim",
 						isPartial
 							? "Recalling the requested slice..."
-							: `Recalled ${details?.bytes ?? 0} bytes across ${details?.lines ?? 0} lines`,
+							: details?.matches
+								? `Found ${details.matches.length} matches after scanning ${details.scannedBytes ?? 0} bytes`
+								: `Recalled ${details?.bytes ?? 0} bytes across ${details?.lines ?? 0} lines`,
 					),
 					0,
 					0,
@@ -134,9 +223,34 @@ export function createObservationPackExtension(): ExtensionFactory {
 			},
 		});
 
+		const reportedUnavailableRuntimes = new WeakSet<object>();
 		pi.on("context", async (event, ctx: ExtensionContext) => {
-			const projected = [...event.messages];
+			if (!pi.getActiveTools().includes("obs_recall")) return;
+			if (!ctx.sessionManager.getSessionDir()) {
+				if (!reportedUnavailableRuntimes.has(ctx.sessionManager)) {
+					reportedUnavailableRuntimes.add(ctx.sessionManager);
+					console.error("[observationpack] disabled for an ephemeral session without persistent storage");
+				}
+				return undefined;
+			}
 			const root = runtimeRoot(ctx);
+			const projected = [...event.messages];
+			const ledgerEntries: Record<string, unknown>[] = [];
+			const pendingSavings: number[] = [];
+			const branchIds = ["<root>", ...ctx.sessionManager.getBranch().map((entry) => entry.id)];
+			const leafId = ctx.sessionManager.getLeafId() ?? "<root>";
+			let sessionCounts = sentCounts.get(root);
+			if (!sessionCounts) {
+				sessionCounts = new Map();
+				sentCounts.set(root, sessionCounts);
+			}
+			const activeCounts = new Map<string, number>();
+			for (const id of branchIds) {
+				for (const [observationId, count] of sessionCounts.get(id) ?? []) {
+					activeCounts.set(observationId, Math.max(activeCounts.get(observationId) ?? 0, count));
+				}
+			}
+			const pendingLeafCounts = new Map<string, number>();
 			// How many provider requests each message has already been part of,
 			// counted by the assistant messages that follow it.
 			const priorAssistantCounts = new Array<number>(event.messages.length);
@@ -155,12 +269,13 @@ export function createObservationPackExtension(): ExtensionFactory {
 				try {
 					const observation = createObservation(message, root);
 					if (!observation) continue;
-					await ensureStored(observation);
+					await ensureStored(observation, ctx.sessionManager.getSessionDir());
 
-					const sendCountKey = `${root}\0${observation.id}`;
-					const previousSends = sentCounts.get(sendCountKey) ?? priorAssistantCounts[index] ?? 0;
+					const branchSends = pendingLeafCounts.get(observation.id) ?? activeCounts.get(observation.id) ?? 0;
+					const historySends = priorAssistantCounts[index] ?? 0;
+					const previousSends = Math.max(branchSends, historySends);
 					if (previousSends < FULL_SENDS) {
-						await ledgerFor(ctx)({
+						ledgerEntries.push({
 							event: "full",
 							id: observation.id,
 							request: requestIndex,
@@ -170,14 +285,14 @@ export function createObservationPackExtension(): ExtensionFactory {
 							originalTokens: observation.tokens,
 							contentHash: observation.contentHash,
 						});
-						sentCounts.set(sendCountKey, previousSends + 1);
+						pendingLeafCounts.set(observation.id, previousSends + 1);
 						continue;
 					}
 
 					const placeholder = placeholderFor(observation);
 					const placeholderTokens = estimateTokens(placeholder);
 					const removedTokens = Math.max(0, observation.tokens - placeholderTokens);
-					await ledgerFor(ctx)({
+					ledgerEntries.push({
 						event: "placeholder",
 						id: observation.id,
 						request: requestIndex,
@@ -190,15 +305,9 @@ export function createObservationPackExtension(): ExtensionFactory {
 						placeholderTokens,
 						removedTokens,
 					});
-					if (previousSends === FULL_SENDS) {
-						showSolPiSavings(
-							ctx,
-							"Observation Pack",
-							formatSavingsCount(removedTokens, "context tokens avoided"),
-						);
-					}
+					if (previousSends === FULL_SENDS) pendingSavings.push(removedTokens);
 					projected[index] = { ...message, content: [{ type: "text", text: placeholder }] };
-					sentCounts.set(sendCountKey, previousSends + 1);
+					pendingLeafCounts.set(observation.id, Math.min(FULL_SENDS + 1, previousSends + 1));
 				} catch (error) {
 					// Fail open: a packing failure must never cost the agent its observation.
 					const reason = error instanceof Error ? error.message : String(error);
@@ -206,6 +315,28 @@ export function createObservationPackExtension(): ExtensionFactory {
 				}
 			}
 
+			if (ledgerEntries.length === 0) return { messages: projected };
+			try {
+				await ledgerFor(ctx)(ledgerEntries);
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				console.error(`[observationpack] fail-open for context ledger: ${reason}`);
+				return { messages: event.messages };
+			}
+
+			if (pendingLeafCounts.size > 0) {
+				const leafCounts = sessionCounts.get(leafId) ?? new Map<string, number>();
+				for (const [id, count] of pendingLeafCounts) leafCounts.set(id, count);
+				sessionCounts.set(leafId, leafCounts);
+			}
+			for (const removedTokens of pendingSavings) {
+				try {
+					showSolPiSavings(ctx, "Observation Pack", formatSavingsCount(removedTokens, "context tokens avoided"));
+				} catch (error) {
+					const reason = error instanceof Error ? error.message : String(error);
+					console.error(`[observationpack] savings notification failed: ${reason}`);
+				}
+			}
 			return { messages: projected };
 		});
 	};
