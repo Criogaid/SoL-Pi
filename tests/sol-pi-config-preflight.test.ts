@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadSolPiConfig } from "../src/sol-pi/config.ts";
 
 const SCRIPT = join(process.cwd(), "scripts/check-sol-pi-config.mjs");
 
@@ -140,5 +141,43 @@ describe("SoL-Pi configuration preflight", () => {
 		const result = run(writeConfig({ ...ALL_ENABLED, provider: "custom" }));
 		expect(result.status).toBe(1);
 		expect(result.stderr).toContain("unknown key: provider");
+	});
+
+	it.each([
+		{ version: 1 },
+		ALL_ENABLED,
+		{ version: 1, actionFusion: true, cacheWriteReadRatio: 0, evidencePreservingReducerModel: " model " },
+	])("matches runtime defaults and normalization for %j", (value) => {
+		const result = run(writeConfig(value), false);
+		const runtime = loadSolPiConfig(directory, directory);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout).effective_config).toEqual(runtime);
+		expect(Object.isFrozen(runtime)).toBe(true);
+	});
+
+	it.each([
+		[null, "config must be a JSON object", "SoL-Pi config must be a JSON object: {path}"],
+		[{ version: 0, typo: true }, "unknown key: typo", "Unknown SoL-Pi config key: typo"],
+		[{ version: 0, actionFusion: "yes" }, "version must be 1", "SoL-Pi config version must be 1: {path}"],
+		[{ version: 1, actionFusion: "yes", cacheWriteReadRatio: -1 }, "actionFusion must be boolean", "SoL-Pi config actionFusion must be boolean: {path}"],
+		[{ version: 1, cacheWriteReadRatio: -1, evidencePreservingReducerModel: "" }, "cacheWriteReadRatio must be a finite non-negative number", "SoL-Pi config cacheWriteReadRatio must be a finite non-negative number: {path}"],
+		[{ version: 1, evidencePreservingReducerModel: "", evidencePreservingReducerProvider: "" }, "evidencePreservingReducerModel must be a non-empty string", "SoL-Pi config evidencePreservingReducerModel must be a non-empty string: {path}"],
+		[{ version: 1, evidencePreservingReducerProvider: "" }, "evidencePreservingReducerProvider must be a non-empty string", "SoL-Pi config evidencePreservingReducerProvider must be a non-empty string: {path}"],
+	] as const)("preserves both entrypoints' first error for %j", (value, cliMessage, runtimeMessage) => {
+		const path = writeConfig(value);
+		const result = run(path, false);
+		expect(result.status).toBe(1);
+		expect(result.stderr.trim()).toBe(`SoL-Pi configuration preflight failed: ${cliMessage}`);
+		expect(() => loadSolPiConfig(directory, directory)).toThrow(new Error(runtimeMessage.replace("{path}", path)));
+	});
+
+	it.each([
+		[{ version: 1, actionFusion: false, observationPack: "yes" }, "actionFusion must be true"],
+		[{ version: 1, cacheWriteReadRatio: -1 }, "actionFusion must be true"],
+		[{ ...ALL_ENABLED, actionFusion: "yes" }, "actionFusion must be boolean"],
+	] as const)("checks required features in their original order for %j", (value, message) => {
+		const result = run(writeConfig(value));
+		expect(result.status).toBe(1);
+		expect(result.stderr.trim()).toBe(`SoL-Pi configuration preflight failed: ${message}`);
 	});
 });

@@ -10,6 +10,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"types": ["node", "vitest/globals"],
 		"allowImportingTsExtensions": true,
+		"allowJs": true,
 		"skipLibCheck": true
 	},
 	"include": ["src/**/*.ts", "tests/**/*.ts"]

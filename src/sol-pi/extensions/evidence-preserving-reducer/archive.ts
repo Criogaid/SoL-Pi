@@ -4,21 +4,13 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isRecord, type ReducerConfig, sha256 } from "./config.ts";
+import { isRecord, sha256 } from "./config.ts";
 
 export interface ArchiveObject {
 	readonly hash: string;
 	readonly bytes: number;
-	readonly chars: number;
 	readonly lines: number;
 	readonly path: string;
-}
-
-/**
- * Archived logs live under SoL-Pi's session-derived runtime directory.
- */
-export function archiveRoot(config: ReducerConfig): string {
-	return config.storeRoot;
 }
 
 /**
@@ -61,7 +53,6 @@ export async function archiveBody(root: string, body: string): Promise<ArchiveOb
 	return {
 		hash,
 		bytes: Buffer.byteLength(body, "utf8"),
-		chars: body.length,
 		lines: countLines(body),
 		path,
 	};

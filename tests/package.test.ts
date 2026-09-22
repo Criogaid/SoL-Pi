@@ -62,6 +62,7 @@ describe("published package", () => {
 	it("ships Online Context Compact from the standalone source tree", () => {
 		expect(files).toContain("src/sol-pi/extensions/online-context-compact/index.ts");
 		expect(files).toContain("scripts/check-sol-pi-config.mjs");
+		expect(files).toContain("src/sol-pi/config-values.mjs");
 		expect(files).toContain("agents-install.md");
 		expect(files).not.toContain("AGENTS.md");
 		expect(files).not.toContain("CLAUDE.md");

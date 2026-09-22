@@ -6,17 +6,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const FEATURE_KEYS = [
-	"actionFusion",
-	"observationPack",
-	"evidencePreservingReducer",
-	"onlineContextCompact",
-];
-const DEFAULT_CACHE_WRITE_READ_RATIO = 12.5;
-const DEFAULT_EPR_REDUCER_PROVIDER = ["openai", "codex"].join("-");
-const DEFAULT_EPR_REDUCER_MODEL = ["gpt-5.6", "luna"].join("-");
-const STRING_KEYS = ["evidencePreservingReducerModel", "evidencePreservingReducerProvider"];
-const CONFIG_KEYS = new Set(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio"]);
+import { FEATURE_KEYS, parseSolPiConfig } from "../src/sol-pi/config-values.mjs";
 
 function fail(message) {
 	throw new Error(message);
@@ -59,54 +49,18 @@ function readConfig(path) {
 }
 
 function validateConfig(value, requireAllEnabled) {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		fail("config must be a JSON object");
-	}
-	for (const key of Object.keys(value)) {
-		if (!CONFIG_KEYS.has(key)) fail(`unknown key: ${key}`);
-	}
-	if (value.version !== 1) fail("version must be 1");
-
 	const effective = { version: 1 };
-	for (const key of FEATURE_KEYS) {
-		const configured = value[key];
-		if (configured !== undefined && typeof configured !== "boolean") fail(`${key} must be boolean`);
-		effective[key] = configured ?? false;
-		if (requireAllEnabled && effective[key] !== true) fail(`${key} must be true`);
-	}
-	const cacheWriteReadRatio = Object.hasOwn(value, "cacheWriteReadRatio")
-		? value.cacheWriteReadRatio
-		: DEFAULT_CACHE_WRITE_READ_RATIO;
-	if (
-		typeof cacheWriteReadRatio !== "number" ||
-		!Number.isFinite(cacheWriteReadRatio) ||
-		cacheWriteReadRatio < 0
-	) {
-		fail("cacheWriteReadRatio must be a finite non-negative number");
-	}
-	effective.cacheWriteReadRatio = cacheWriteReadRatio;
-	effective.evidencePreservingReducerModel = stringConfigValue(
-		value,
-		"evidencePreservingReducerModel",
-		DEFAULT_EPR_REDUCER_MODEL,
-	);
-	effective.evidencePreservingReducerProvider = stringConfigValue(
-		value,
-		"evidencePreservingReducerProvider",
-		DEFAULT_EPR_REDUCER_PROVIDER,
-	);
+	const config = parseSolPiConfig(value, (key, enabled) => {
+		effective[key] = enabled;
+		if (requireAllEnabled && !enabled) fail(`${key} must be true`);
+	});
 
 	return {
 		ok: true,
 		all_enabled: FEATURE_KEYS.every((key) => effective[key] === true),
-		effective_config: effective,
+		// Keep the CLI's field order without maintaining a second set of defaults.
+		effective_config: { ...effective, cacheWriteReadRatio: config.cacheWriteReadRatio, ...config },
 	};
-}
-
-function stringConfigValue(value, key, defaultValue) {
-	const configured = Object.hasOwn(value, key) ? value[key] : defaultValue;
-	if (typeof configured !== "string" || configured.trim().length === 0) fail(`${key} must be a non-empty string`);
-	return configured.trim();
 }
 
 try {

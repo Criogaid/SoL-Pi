@@ -27,7 +27,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { runtimeRoot } from "../../runtime-paths.ts";
 import { formatSavingsBytes, showSolPiSavings } from "../../tui.ts";
-import { archiveBody, archiveRoot } from "./archive.ts";
+import { archiveBody } from "./archive.ts";
 import { ReceiptCache } from "./cache.ts";
 import { reducibleToolResult } from "./candidate.ts";
 import {
@@ -84,7 +84,7 @@ export async function reduceToolResult(
 		return undefined;
 	}
 
-	const archive = await archiveBody(archiveRoot(config), body);
+	const archive = await archiveBody(config.storeRoot, body);
 	journal("candidate", {
 		toolCallId: event.toolCallId,
 		commandSha256: sha256(command),

@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { DEFAULT_REDUCER_MODEL, DEFAULT_REDUCER_PROVIDER } from "../../config-values.mjs";
 
 export const REDUCER_EVENT_TYPE = "sol-pi-evidence-preserving-reducer-v1" as const;
 export const REDUCER_EVENT_SCHEMA = "sol-pi-evidence-preserving-reducer/1" as const;
@@ -19,8 +20,7 @@ const DEFAULT_MAX_CHARS = 600_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
 const DEFAULT_TIMEOUT_MS = 90_000;
 
-export const DEFAULT_REDUCER_PROVIDER = ["openai", "codex"].join("-");
-export const DEFAULT_REDUCER_MODEL = ["gpt-5.6", "luna"].join("-");
+export { DEFAULT_REDUCER_MODEL, DEFAULT_REDUCER_PROVIDER } from "../../config-values.mjs";
 
 const NON_CARGO_DIAGNOSTIC_COMMAND =
 	/^(?:lake\0build|lake\0env\0lean|lean|coq|zig\0build|pytest|python(?:3)?\0-m\0(?:pytest|unittest|py_compile)|ctest|cmake\0--build|ninja|make|npm\0test|pnpm\0test|yarn\0test|go\0test|bazel\0test)(?:\0|$)/i;
@@ -164,7 +164,6 @@ function isDiagnosticCommand(command: string): boolean {
 
 export const DIAGNOSTIC_COMMAND = Object.freeze({ test: isDiagnosticCommand });
 
-export const FAILURE_SIGNAL = /error|failed|failure|fatal|exception|panic|timeout|unsolved|type mismatch|assert/i;
 /**
  * Precaution, not a complete secret scanner: three shapes that appear in real
  * build and test output. The password family uses a tight window so ordinary
