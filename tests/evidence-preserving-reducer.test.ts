@@ -773,7 +773,7 @@ describe("evidence-preserving reducer", () => {
 
 	it.each(["invented", "model-error"] as const)("fails open on %s", async (mode) => {
 		const root = await storeRoot();
-		const body = `ERROR real failure\n${"x".repeat(5000)}`;
+		const body = `ERROR real failure\n${"x\n".repeat(2500)}`;
 		const { context, manager, pi } = load(
 			root,
 			modelComplete(
@@ -830,6 +830,7 @@ describe("evidence-preserving reducer", () => {
 		{ body: "no fatal errors were reported\nfatal: missing symbol x", quotes: ["fatal errors", "fatal: missing symbol x"] },
 		{ body: "fatal: first\nfatal: second", quotes: ["fatal: first\nfatal:", "second"] },
 		{ body: "ERROR:\n  missing symbol x", quotes: ["ERROR:", "missing symbol x"] },
+		{ body: "fatal: missing symbol x\n" + "x".repeat(601), quotes: ["fatal: missing symbol x"] },
 	])("rejects incomplete candidate failure lines (%#)", async ({ body, quotes }) => {
 		const archive = await archiveBody(await storeRoot(), body);
 		const raw = JSON.stringify({
@@ -846,7 +847,6 @@ describe("evidence-preserving reducer", () => {
 		{ diagnostic: "ERROR:\n  missing symbol x", quote: "ERROR:", uncertain: false },
 		{ diagnostic: "Process terminated with exit code 137", quote: "", uncertain: false },
 		{ diagnostic: "fatal: missing symbol x", quote: "fatal: missing symbol x", uncertain: true },
-		{ diagnostic: "fatal: missing symbol x\n" + "x".repeat(601), quote: "fatal: missing symbol x", uncertain: false },
 	])("preserves original output when a failed receipt omits content or is uncertain (%#)", async ({ diagnostic, quote, uncertain }) => {
 		const root = await storeRoot();
 		const body = `${diagnostic}\n${"progress\n".repeat(1000)}`;
@@ -920,7 +920,7 @@ describe("evidence-preserving reducer", () => {
 
 	it("fails open when Pi cannot complete the nested model call", async () => {
 		const root = await storeRoot();
-		const body = `ERROR real failure\n${"x".repeat(5000)}`;
+		const body = `ERROR real failure\n${"x\n".repeat(2500)}`;
 		const { context, manager, pi } = load(root, async () => {
 			throw new Error("authentication is not configured");
 		});
@@ -933,7 +933,7 @@ describe("evidence-preserving reducer", () => {
 
 	it("fails open when the configured reducer model is unavailable", async () => {
 		const root = await storeRoot();
-		const body = `ERROR real failure\n${"x".repeat(5000)}`;
+		const body = `ERROR real failure\n${"x\n".repeat(2500)}`;
 		let calls = 0;
 		const { context, manager, pi } = load(
 			root,

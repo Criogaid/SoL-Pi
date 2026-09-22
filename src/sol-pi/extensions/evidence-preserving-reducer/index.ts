@@ -41,7 +41,7 @@ import {
 } from "./config.ts";
 import { createJournal, type Journal } from "./journal.ts";
 import { callReducer, type ProviderResult } from "./provider.ts";
-import { receiptText, reducerInstructions, validateReceipt } from "./receipt.ts";
+import { canFitFailureEvidence, receiptText, reducerInstructions, validateReceipt } from "./receipt.ts";
 
 export interface ReducedToolResult {
 	readonly content: ToolResultEvent["content"];
@@ -76,6 +76,11 @@ export async function reduceToolResult(
 	}
 	if (LIKELY_SECRET.test(body)) {
 		journal("fallback", { reason: "likely-secret" });
+		return undefined;
+	}
+
+	if (event.isError && !canFitFailureEvidence(body)) {
+		journal("fallback", { reason: "failure-evidence-cannot-fit" });
 		return undefined;
 	}
 

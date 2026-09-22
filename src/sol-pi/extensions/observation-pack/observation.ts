@@ -415,9 +415,10 @@ async function contextFor(
 }
 
 /**
- * Search an archived observation as literal UTF-8 bytes. Search offsets are
- * inclusive match starts. Line numbers require a bounded prefix rescan because
- * archives intentionally carry no line index.
+ * Search an archived observation as literal UTF-8 bytes under the trusted
+ * sessionDirectory. Reject linked directories and verify the opened object.
+ * Search offsets are inclusive match starts. Line numbers require a bounded
+ * prefix rescan because archives intentionally carry no line index.
  */
 export async function searchObservation(
 	path: string,
@@ -425,11 +426,12 @@ export async function searchObservation(
 	offset: number,
 	maxResultBytes: number,
 	signal: AbortSignal | undefined,
+	sessionDirectory: string,
 ): Promise<SearchResult> {
+	await verifyStorageDirectories(path, sessionDirectory, "search");
 	const handle = await openObservation(path);
 	try {
-		const fileStats = await handle.stat();
-		if (!fileStats.isFile()) throw new Error("Stored observation is not a regular file");
+		const fileStats = await verifyOpenedObject(handle, path, "search", sessionDirectory);
 		if (offset > fileStats.size) throw new Error(`Offset ${offset} exceeds observation size ${fileStats.size}`);
 		const prefix = await countPrefixLines(handle, offset, signal);
 		let position = offset;

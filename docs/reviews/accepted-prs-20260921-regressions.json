@@ -1,0 +1,393 @@
+{
+  "node": "v26.9.0",
+  "platform": "win32",
+  "testSha256": "6b52074a787309ff21debbe95c27573c229a5c06ed49fa0fc4b63a69cedc76a8",
+  "helperSha256": "c6c8bab0f184887ae4a5aa461fba63495225a5dd327ca1d28a42d4fe1f256883",
+  "dependencyLockSha256": "89b539311abfe100bb75626b58a5a354f299f6ce0ecab0e04e0579c05c3c5efc",
+  "method": "Identical tests and installed dependencies; persisted synthetic session replay; offline reducer responses. Historical failures are recorded, unavailable features are skipped. No billing or task-quality claims.",
+  "versions": [
+    {
+      "reference": "7fcbd4b",
+      "commit": "7fcbd4b8d36dd0f93d100d6869a25bc3af6fdc6b",
+      "exitCode": 1,
+      "passed": 2,
+      "failed": 5,
+      "skipped": 2,
+      "tests": [
+        {
+          "title": "replays a persisted session with observationPack=false before pricing compaction",
+          "status": "passed"
+        },
+        {
+          "title": "replays a persisted session with observationPack=true before pricing compaction",
+          "status": "passed"
+        },
+        {
+          "title": "rejects redirected observation directories with search=false",
+          "status": "failed",
+          "failure": "AssertionError: expected undefined to be an instance of Error"
+        },
+        {
+          "title": "rejects redirected observation directories with search=true",
+          "status": "skipped"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving long-line evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be +0 // Object.is equality"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving total-capacity evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be +0 // Object.is equality"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving boundary-line evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be 1 // Object.is equality"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving repeated-lines evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be 1 // Object.is equality"
+        },
+        {
+          "title": "runs the documented search comparison and preserves source fidelity",
+          "status": "skipped"
+        }
+      ],
+      "measurements": {
+        "rawSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 79655,
+          "compactionTriggers": 1,
+          "replayedMessages": 6
+        },
+        "packedSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 23763,
+          "compactionTriggers": 0,
+          "replayedMessages": 6
+        },
+        "pagedDirectory": {
+          "available": true,
+          "rejected": false,
+          "returnedExternalBytes": true
+        },
+        "searchDirectory": {
+          "available": false
+        },
+        "long-line": {
+          "sourceSha256": "a1216e29cb89932d7db6bfdf42ca5401f3b10710361a8ddd2df4e78cfe65158f",
+          "sourceBytes": 6651,
+          "providerCalls": 2,
+          "reducerInputBytes": 16764,
+          "reductions": 2
+        },
+        "total-capacity": {
+          "sourceSha256": "1ad17632904ebdbb51017a0470609f3ce9ab9557bdc6f8cd50307db95d7bc476",
+          "sourceBytes": 7990,
+          "providerCalls": 2,
+          "reducerInputBytes": 18878,
+          "reductions": 2
+        },
+        "boundary-line": {
+          "sourceSha256": "47725915d6dbac7d2e495e3fb41a7952fd706d4b12da012ced1df630a1a24a3b",
+          "sourceBytes": 180300,
+          "providerCalls": 2,
+          "reducerInputBytes": 364064,
+          "reductions": 2
+        },
+        "repeated-lines": {
+          "sourceSha256": "0d52de2f233ea987c439ec44a779ea6e29bc7465e7e8815dca533245ece1ad54",
+          "sourceBytes": 7500,
+          "providerCalls": 2,
+          "reducerInputBytes": 18460,
+          "reductions": 2
+        },
+        "searchBenchmark": {
+          "available": false
+        }
+      }
+    },
+    {
+      "reference": "958e7c0",
+      "commit": "958e7c04c800c0a72fd3c15c90c54d66d4631f56",
+      "exitCode": 1,
+      "passed": 4,
+      "failed": 5,
+      "skipped": 0,
+      "tests": [
+        {
+          "title": "replays a persisted session with observationPack=false before pricing compaction",
+          "status": "passed"
+        },
+        {
+          "title": "replays a persisted session with observationPack=true before pricing compaction",
+          "status": "failed",
+          "failure": "AssertionError: expected 1 to be +0 // Object.is equality"
+        },
+        {
+          "title": "rejects redirected observation directories with search=false",
+          "status": "passed"
+        },
+        {
+          "title": "rejects redirected observation directories with search=true",
+          "status": "failed",
+          "failure": "AssertionError: expected undefined to be an instance of Error"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving long-line evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be +0 // Object.is equality"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving total-capacity evidence",
+          "status": "failed",
+          "failure": "AssertionError: expected 2 to be +0 // Object.is equality"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving boundary-line evidence",
+          "status": "passed"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving repeated-lines evidence",
+          "status": "passed"
+        },
+        {
+          "title": "runs the documented search comparison and preserves source fidelity",
+          "status": "failed",
+          "failure": "AssertionError: node:path:611\r"
+        }
+      ],
+      "measurements": {
+        "rawSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 79655,
+          "compactionTriggers": 1,
+          "replayedMessages": 6
+        },
+        "packedSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 23768,
+          "compactionTriggers": 1,
+          "replayedMessages": 6
+        },
+        "pagedDirectory": {
+          "available": true,
+          "rejected": true,
+          "returnedExternalBytes": false
+        },
+        "searchDirectory": {
+          "available": true,
+          "rejected": false,
+          "returnedExternalBytes": true
+        },
+        "long-line": {
+          "sourceSha256": "a1216e29cb89932d7db6bfdf42ca5401f3b10710361a8ddd2df4e78cfe65158f",
+          "sourceBytes": 6651,
+          "providerCalls": 2,
+          "reducerInputBytes": 17702,
+          "reductions": 0
+        },
+        "total-capacity": {
+          "sourceSha256": "1ad17632904ebdbb51017a0470609f3ce9ab9557bdc6f8cd50307db95d7bc476",
+          "sourceBytes": 7990,
+          "providerCalls": 2,
+          "reducerInputBytes": 19816,
+          "reductions": 0
+        },
+        "boundary-line": {
+          "sourceSha256": "47725915d6dbac7d2e495e3fb41a7952fd706d4b12da012ced1df630a1a24a3b",
+          "sourceBytes": 180300,
+          "providerCalls": 1,
+          "reducerInputBytes": 182501,
+          "reductions": 2
+        },
+        "repeated-lines": {
+          "sourceSha256": "0d52de2f233ea987c439ec44a779ea6e29bc7465e7e8815dca533245ece1ad54",
+          "sourceBytes": 7500,
+          "providerCalls": 1,
+          "reducerInputBytes": 9699,
+          "reductions": 2
+        },
+        "searchBenchmark": {
+          "available": true,
+          "status": 1,
+          "stderr": "node:path:611\r\n    validateString(from, 'from');\r\n    ^\r\n\r\nTypeError [ERR_INVALID_ARG_TYPE]: The \"from\" argument must be of type string. Received undefined\r\n    at relative (node:path:611:5)\r\n    at verifyStorageDirectories (file:///C:/Users/Kripto/AppData/Local/Temp/sol-pi-version-replay-eWXAFS/snapshot-1/src/sol-pi/extensions/observation-pack/observation.ts:27:18)\r\n    at ensureStored (file:///C:/Users/Kripto/AppData/Local/Temp/sol-pi-version-replay-eWXAFS/snapshot-1/src/sol-pi/extensions/observation-pack/observation.ts:196:8)\r\n    at file:///C:/Users/Kripto/AppData/Local/Temp/sol-pi-version-replay-eWXAFS/snapshot-1/scripts/compare-observation-search.mjs:30:7 {\r\n  code: 'ERR_INVALID_ARG_TYPE'\r\n}\r\n\r\nNode.js v26.9.0\r\n"
+        }
+      }
+    },
+    {
+      "reference": "working-tree",
+      "commit": "958e7c04c800c0a72fd3c15c90c54d66d4631f56",
+      "patchSha256": "14bedfe5f091040be7353aedb0c6eedc982e7a297664faf62ffc35bfd1c63c31",
+      "exitCode": 0,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "tests": [
+        {
+          "title": "replays a persisted session with observationPack=false before pricing compaction",
+          "status": "passed"
+        },
+        {
+          "title": "replays a persisted session with observationPack=true before pricing compaction",
+          "status": "passed"
+        },
+        {
+          "title": "rejects redirected observation directories with search=false",
+          "status": "passed"
+        },
+        {
+          "title": "rejects redirected observation directories with search=true",
+          "status": "passed"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving long-line evidence",
+          "status": "passed"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving total-capacity evidence",
+          "status": "passed"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving boundary-line evidence",
+          "status": "passed"
+        },
+        {
+          "title": "avoids impossible reducer calls while preserving repeated-lines evidence",
+          "status": "passed"
+        },
+        {
+          "title": "runs the documented search comparison and preserves source fidelity",
+          "status": "passed"
+        }
+      ],
+      "measurements": {
+        "rawSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 79655,
+          "compactionTriggers": 1,
+          "replayedMessages": 6
+        },
+        "packedSession": {
+          "transcriptSha256": "78c55ef237ab21b75294f6bd9e3a4aa0b16a2fdf964f99599d569adbe3d65405",
+          "rawTokens": 79655,
+          "visibleTokens": 23768,
+          "compactionTriggers": 0,
+          "replayedMessages": 6
+        },
+        "pagedDirectory": {
+          "available": true,
+          "rejected": true,
+          "returnedExternalBytes": false
+        },
+        "searchDirectory": {
+          "available": true,
+          "rejected": true,
+          "returnedExternalBytes": false
+        },
+        "long-line": {
+          "sourceSha256": "a1216e29cb89932d7db6bfdf42ca5401f3b10710361a8ddd2df4e78cfe65158f",
+          "sourceBytes": 6651,
+          "providerCalls": 0,
+          "reducerInputBytes": 0,
+          "reductions": 0
+        },
+        "total-capacity": {
+          "sourceSha256": "1ad17632904ebdbb51017a0470609f3ce9ab9557bdc6f8cd50307db95d7bc476",
+          "sourceBytes": 7990,
+          "providerCalls": 0,
+          "reducerInputBytes": 0,
+          "reductions": 0
+        },
+        "boundary-line": {
+          "sourceSha256": "47725915d6dbac7d2e495e3fb41a7952fd706d4b12da012ced1df630a1a24a3b",
+          "sourceBytes": 180300,
+          "providerCalls": 1,
+          "reducerInputBytes": 182501,
+          "reductions": 2
+        },
+        "repeated-lines": {
+          "sourceSha256": "0d52de2f233ea987c439ec44a779ea6e29bc7465e7e8815dca533245ece1ad54",
+          "sourceBytes": 7500,
+          "providerCalls": 1,
+          "reducerInputBytes": 9699,
+          "reductions": 2
+        },
+        "searchBenchmark": {
+          "available": true,
+          "status": 0,
+          "byteTotals": {
+            "baseline": {
+              "schema": 202,
+              "description": 66,
+              "promptSnippet": 67,
+              "placeholder": 993
+            },
+            "new": {
+              "schema": 288,
+              "description": 84,
+              "promptSnippet": 67,
+              "placeholder": 1014
+            },
+            "delta": {
+              "schema": 86,
+              "description": 18,
+              "promptSnippet": 0,
+              "placeholder": 21
+            }
+          },
+          "paging": {
+            "calls": 3,
+            "requestBytes": 151,
+            "resultBytes": 11771,
+            "returnedSourceBytes": 11329,
+            "elapsedMs": 6.349999999999909,
+            "sourceFidelity": true
+          },
+          "searches": {
+            "needle": {
+              "calls": 1,
+              "requestBytes": 65,
+              "resultBytes": 3153,
+              "scannedBytes": 11329,
+              "matchCount": 7,
+              "sourceFidelity": true
+            },
+            "Needle": {
+              "calls": 1,
+              "requestBytes": 65,
+              "resultBytes": 525,
+              "scannedBytes": 11329,
+              "matchCount": 1,
+              "sourceFidelity": true
+            },
+            "☾n": {
+              "calls": 1,
+              "requestBytes": 63,
+              "resultBytes": 791,
+              "scannedBytes": 11329,
+              "matchCount": 1,
+              "sourceFidelity": true
+            },
+            "missing": {
+              "calls": 1,
+              "requestBytes": 66,
+              "resultBytes": 150,
+              "scannedBytes": 11329,
+              "matchCount": 0,
+              "sourceFidelity": true
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -175,12 +175,21 @@ export function boundaryCompactionInstructions(pendingProgress: readonly Progres
 	return `${prefix}${records.join("\n")}${suffix}`;
 }
 
-function compactionTokenEstimate(entries: readonly SessionEntry[], startIndex: number, endIndex: number): number {
+function compactionTokenEstimate(
+	entries: readonly SessionEntry[],
+	startIndex: number,
+	endIndex: number,
+	projectedResults?: ReadonlyMap<string, AgentMessage>,
+): number {
 	let tokens = 0;
 	for (let index = startIndex; index < endIndex; index++) {
 		const entry = entries[index];
 		if (!entry || entry.type === "compaction") continue;
-		const message = sessionEntryToContextMessages(entry)[0];
+		const original = sessionEntryToContextMessages(entry)[0];
+		// Packed or filtered tool results must not earn their raw token savings again.
+		const message = original?.role === "toolResult" && projectedResults
+			? projectedResults.get(original.toolCallId)
+			: original;
 		if (message) tokens += estimateTokens(message);
 	}
 	return tokens;
@@ -217,11 +226,19 @@ function branchAfterAbort(entries: readonly SessionEntry[]): SessionEntry[] {
 	];
 }
 
+/**
+ * Estimate removable context at Pi's raw-history cut. Supplied provider messages
+ * price tool results after projection; omitting them prices the raw history.
+ */
 export function estimateNativeCompactionTokens(
 	entries: readonly SessionEntry[],
 	keepRecentTokens: number,
+	providerMessages?: readonly AgentMessage[],
 ): number {
 	const path = branchAfterAbort(entries);
+	const projectedResults = providerMessages === undefined ? undefined : new Map(
+		providerMessages.flatMap((message) => message.role === "toolResult" ? [[message.toolCallId, message] as const] : []),
+	);
 	let startIndex = 0;
 	let previousSummaryTokens = 0;
 	for (let index = path.length - 1; index >= 0; index--) {
@@ -237,10 +254,10 @@ export function estimateNativeCompactionTokens(
 	const cut = findCutPoint(path, startIndex, path.length, keepRecentTokens);
 	const historyEnd = cut.isSplitTurn ? cut.turnStartIndex : cut.firstKeptEntryIndex;
 	const historyTokens =
-		historyEnd > startIndex ? compactionTokenEstimate(path, startIndex, historyEnd) : 0;
+		historyEnd > startIndex ? compactionTokenEstimate(path, startIndex, historyEnd, projectedResults) : 0;
 	const prefixTokens =
 		cut.isSplitTurn && cut.turnStartIndex >= 0
-			? compactionTokenEstimate(path, cut.turnStartIndex, cut.firstKeptEntryIndex)
+			? compactionTokenEstimate(path, cut.turnStartIndex, cut.firstKeptEntryIndex, projectedResults)
 			: 0;
 	const newHistoryTokens = historyTokens + prefixTokens;
 	return newHistoryTokens > 0 ? previousSummaryTokens + newHistoryTokens : 0;
@@ -382,6 +399,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			const archiveTokens = estimateNativeCompactionTokens(
 				context.sessionManager.getBranch(),
 				keepRecentTokens,
+				observedMessages,
 			);
 			const contextWindowTokens = validPositiveInteger(usage?.contextWindow)
 				? usage.contextWindow

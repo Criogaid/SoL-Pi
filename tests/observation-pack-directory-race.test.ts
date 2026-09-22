@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Mode, PathLike } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -44,7 +44,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 	};
 });
 
-import { ensureStored, type Observation, readRecallChunk } from "../src/sol-pi/extensions/observation-pack/observation.ts";
+import { ensureStored, type Observation, readRecallChunk, searchObservation } from "../src/sol-pi/extensions/observation-pack/observation.ts";
 
 const roots: string[] = [];
 
@@ -173,4 +173,22 @@ it("rejects an opened object when its pathname is restored to a different file",
 	};
 
 	await expect(ensureStored(observation, runtimeRoot)).rejects.toThrow(/changed while open/u);
+});
+
+it("revalidates search directories even when a swapped directory retains the same file identity", async () => {
+	const runtimeRoot = await mkdtemp(join(tmpdir(), "observation-search-race-"));
+	const externalRoot = await mkdtemp(join(tmpdir(), "observation-search-external-"));
+	roots.push(runtimeRoot, externalRoot);
+	const objectsDirectory = join(runtimeRoot, "objects");
+	const objectPath = join(objectsDirectory, "observation.txt");
+	await mkdir(objectsDirectory);
+	await writeFile(objectPath, "original evidence");
+	// A hard link keeps dev/ino equal, so file identity alone cannot detect the directory swap.
+	await link(objectPath, join(externalRoot, "observation.txt"));
+	Object.assign(race, {
+		armed: true, objectPath, objectsDirectory, backupDirectory: `${objectsDirectory}.original`,
+		externalDirectory: externalRoot, opensBeforeSwap: 0, restoreDirectory: false,
+	});
+	await expect(searchObservation(objectPath, Buffer.from("evidence"), 0, 1_000, undefined, runtimeRoot))
+		.rejects.toThrow(/directory/iu);
 });

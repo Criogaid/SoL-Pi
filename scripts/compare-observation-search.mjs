@@ -27,7 +27,7 @@ const contentHash = createHash("sha256").update(body).digest("hex");
 const id = `obs_${createHash("sha256").update(`compare\0compare\0${contentHash}`).digest("hex").slice(0, 24)}`;
 const observation = { id, contentHash, filePath: observationPath(archiveRoot, id), toolName: "compare", text: body, bytes: Buffer.byteLength(body), lines: body.split("\n").length, tokens: Math.ceil(body.length / 4) };
 try {
-await ensureStored(observation);
+await ensureStored(observation, root);
 
 const registeredTools = [];
 createObservationPackExtension()({ registerTool: (tool) => registeredTools.push(tool), on: () => undefined });

@@ -76,6 +76,22 @@ function lineNumberOf(body: string, quote: string): number | undefined {
 	return line;
 }
 
+function failureLines(body: string): Set<string> {
+	return new Set(body.split(/\r?\n/u).filter((line) => line.trim().length > 0));
+}
+
+/** Reject provably impossible failure receipts before paying for a reducer call. */
+export function canFitFailureEvidence(body: string): boolean {
+	const lines = failureLines(body);
+	let requiredChars = 0;
+	for (const line of lines) {
+		if (line.length > MAX_QUOTE_CHARS) return false;
+		requiredChars += line.length;
+	}
+	// This lower bound omits separators and JSON overhead; passing still requires full validation.
+	return lines.size > 0 && requiredChars <= MAX_EVIDENCE_ITEMS * MAX_QUOTE_CHARS;
+}
+
 /**
  * Accept a receipt only when every claim in it can be checked against the
  * archived log: right schema, right source hash, status that matches the
@@ -138,7 +154,7 @@ export function validateReceipt(
 	// This permits repeated-line deduplication, not semantic log summarization.
 	if (isError) {
 		if (parsed.uncertain) return { ok: false, reason: "uncertain-failure-evidence" };
-		const sourceLines = new Set(body.split(/\r?\n/u).filter((line) => line.trim().length > 0));
+		const sourceLines = failureLines(body);
 		const quotedLines = new Set(evidence.flatMap((item) => item.quote.split(/\r?\n/u)));
 		if (sourceLines.size === 0) return { ok: false, reason: "missing-failure-evidence" };
 		for (const line of sourceLines) {

@@ -112,6 +112,7 @@ export function createObservationPackExtension(): ExtensionFactory {
 							offset,
 							RECALL_MAX_BYTES - RECALL_HEADER_RESERVE_BYTES,
 							activeSignal,
+							ctx.sessionManager.getSessionDir(),
 						);
 					} catch (error) {
 						if (error instanceof Error && "code" in error && error.code === "ENOENT") {
