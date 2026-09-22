@@ -323,6 +323,25 @@ describe("observation pack", () => {
 		await expect(recall).rejects.toMatchObject({ code: "ELOOP" });
 	});
 
+	it("validates Unicode search queries without replacing unpaired surrogates", async () => {
+		const sessionDir = await sessionRoot();
+		const message = toolResult(`plain 前🚀後\n${repeatPastThreshold("observation bytes\n")}`);
+		const id = observationId(message);
+		const pi = observationPackPi();
+		await project(pi, message, sessionDir, 1);
+		const search = (query: string) =>
+			pi.tool("obs_recall").execute("search", { id, query }, undefined, undefined, fakeContext(sessionDir));
+
+		for (const query of ["plain", "🚀", "前🚀後"]) {
+			await expect(search(query)).resolves.toMatchObject({
+				details: { matches: [{ context: expect.stringContaining(query) }] },
+			});
+		}
+		for (const query of ["\ud800", "\udc00", "\udc00\ud800", "\ud800\ud800", "x\ud800y"]) {
+			await expect(search(query)).rejects.toThrow("Search query must be well-formed Unicode");
+		}
+	});
+
 	it("aligns a recall offset that lands inside a character", async () => {
 		const sessionDir = await sessionRoot();
 		// Each "☾" is three UTF-8 bytes, so offsets 1 and 2 are inside the first one.

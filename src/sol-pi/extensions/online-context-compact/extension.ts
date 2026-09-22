@@ -410,7 +410,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				state.positiveContextDeltaCount === 0
 					? null
 					: state.positiveContextDeltaTotal / state.positiveContextDeltaCount;
-			const priced = decideCompaction({
+			const decision = decideCompaction({
 				writeTokens,
 				archiveTokens,
 				memoTokens: resolveMemoTokens(state.lastMemoTokens),
@@ -429,10 +429,6 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 					state.nativeCompactionCount === 0 ? null : Math.max(0, state.requestCount - state.lastCompactionRequestCount),
 				subsequentCompactionCooldownRequests: DEFAULT_SUBSEQUENT_COMPACTION_COOLDOWN_REQUESTS,
 			});
-			const decision: CompactionDecision =
-				priced.compact && archiveTokens === 0
-					? { ...priced, compact: false, reason: "native_not_compactable" }
-					: priced;
 			if (!decision.compact) return;
 
 			selected = { decision };
@@ -465,12 +461,6 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			try {
 				compactionInFlight = true;
 				await new Promise<void>((resolve) => {
-					let finished = false;
-					const finish = (): void => {
-						if (finished) return;
-						finished = true;
-						resolve();
-					};
 					context.compact({
 						customInstructions: boundaryCompactionInstructions(state.pendingProgress),
 						onComplete: (compaction) => {
@@ -489,12 +479,12 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 									);
 								}
 							} finally {
-								finish();
+								resolve();
 							}
 						},
 						onError: (error) => {
 							compactionError = error;
-							finish();
+							resolve();
 						},
 					});
 				});
@@ -508,13 +498,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				}
 
 				if (compacted) {
-					let resolveContinuation!: () => void;
-					const continuation: PendingContinuation = {
-						promise: new Promise<void>((resolve) => {
-							resolveContinuation = resolve;
-						}),
-						resolve: () => resolveContinuation(),
-					};
+					const continuation = Promise.withResolvers<void>();
 					nextContinuation = continuation;
 					try {
 						pi.sendMessage(

@@ -51,18 +51,6 @@ const RECALL_LIMITS = {
 	maxLines: RECALL_MAX_LINES - RECALL_HEADER_LINES,
 };
 
-function isWellFormedUnicode(value: string): boolean {
-	for (let index = 0; index < value.length; index += 1) {
-		const code = value.charCodeAt(index);
-		if (code >= 0xd800 && code <= 0xdbff) {
-			const next = value.charCodeAt(index + 1);
-			if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
-			index += 1;
-		} else if (code >= 0xdc00 && code <= 0xdfff) return false;
-	}
-	return true;
-}
-
 export function createObservationPackExtension(): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
 		const sentCounts = new Map<string, Map<string, Map<string, number>>>();
@@ -100,7 +88,7 @@ export function createObservationPackExtension(): ExtensionFactory {
 				if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Offset must be a non-negative safe integer");
 				if (params.query !== undefined) {
 					if (params.query.length === 0) throw new Error("Search query must not be empty");
-					if (!isWellFormedUnicode(params.query)) throw new Error("Search query must be well-formed Unicode");
+					if (!params.query.isWellFormed()) throw new Error("Search query must be well-formed Unicode");
 					const query = Buffer.from(params.query, "utf8");
 					if (query.length > 256) throw new Error("Search query exceeds 256 UTF-8 bytes");
 					const activeSignal = signal ?? ctx.signal;

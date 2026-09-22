@@ -81,10 +81,7 @@ async function canonicalQueueKey(filePath: string): Promise<string> {
 export async function withFusedFileQueue<T>(filePath: string, work: () => Promise<T>): Promise<T> {
 	const key = await canonicalQueueKey(filePath);
 	const previous = queueTails.get(key) ?? Promise.resolve();
-	let release!: () => void;
-	const owned = new Promise<void>((resolveOwned) => {
-		release = resolveOwned;
-	});
+	const { promise: owned, resolve: release } = Promise.withResolvers<void>();
 	const tail = previous.then(() => owned);
 	queueTails.set(key, tail);
 
