@@ -320,11 +320,7 @@ describe("observation pack", () => {
 			undefined,
 			fakeContext(sessionDir),
 		);
-		if (process.platform === "win32") {
-			await expect(recall).rejects.toThrow(/not a regular file/u);
-		} else {
-			await expect(recall).rejects.toMatchObject({ code: "ELOOP" });
-		}
+		await expect(recall).rejects.toMatchObject({ code: "ELOOP" });
 	});
 
 	it("aligns a recall offset that lands inside a character", async () => {
