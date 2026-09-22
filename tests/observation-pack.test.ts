@@ -128,6 +128,58 @@ describe("observation pack", () => {
 		expect(await readFile(observationPath(sessionDir, id!), "utf8")).toBe(body);
 	});
 
+	it("packs only while obs_recall is active and checks availability on every projection", async () => {
+		vi.useFakeTimers();
+		const sessionDir = await sessionRoot();
+		const body = `availability guard\n${"x".repeat(THRESHOLD_BYTES + 1)}\n`;
+		const message = toolResult(body);
+		const original = structuredClone(message);
+		const id = observationId(message);
+		const pi = observationPackPi();
+		let activeTools = ["read"];
+		vi.spyOn(pi, "getActiveTools").mockImplementation(() => activeTools);
+		const notify = vi.fn();
+		const context = fakeContext(sessionDir, {
+			mode: "tui",
+			hasUI: true,
+			ui: { notify, setStatus: vi.fn() } as never,
+		});
+
+		const unavailable: string[] = [];
+		for (let index = 0; index < 4; index += 1) {
+			unavailable.push(resultText((await pi.emitContext([message], context))[0]!));
+		}
+		expect(unavailable).toEqual([body, body, body, body]);
+		expect(message).toEqual(original);
+		expect(notify).not.toHaveBeenCalled();
+		await expect(readFile(observationPath(sessionDir, id), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(
+			readFile(join(sessionDir, "sol-pi", SESSION_ID, "observation-pack", "ledger.jsonl"), "utf8"),
+		).rejects.toMatchObject({ code: "ENOENT" });
+
+		activeTools = ["read", "obs_recall"];
+		const active: string[] = [];
+		for (let index = 0; index < 3; index += 1) {
+			active.push(resultText((await pi.emitContext([message], context))[0]!));
+		}
+		expect(active[0]).toBe(body);
+		expect(active[1]).toBe(body);
+		expect(active[2]).toMatch(new RegExp(`^\\[large tool result replaced.*id: ${id}`, "su"));
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(await readFile(observationPath(sessionDir, id), "utf8")).toBe(body);
+
+		const recalled = await pi
+			.tool("obs_recall")
+			.execute("recall-availability", { id, offset: 0 }, undefined, undefined, context);
+		expect(recalled.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n")).toContain(body);
+
+		activeTools = ["read"];
+		expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(body);
+		expect(await readFile(observationPath(sessionDir, id), "utf8")).toBe(body);
+		activeTools = ["read", "obs_recall"];
+		expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(active[2]);
+	});
+
 	it("announces the first measured placeholder saving only in TUI mode", async () => {
 		vi.useFakeTimers();
 		const sessionDir = await sessionRoot();
@@ -261,9 +313,40 @@ describe("observation pack", () => {
 			throw error;
 		}
 
-		await expect(
-			pi.tool("obs_recall").execute("recall-1", { id, offset: 0 }, undefined, undefined, fakeContext(sessionDir)),
-		).rejects.toMatchObject({ code: "ELOOP" });
+		const recall = pi.tool("obs_recall").execute(
+			"recall-1",
+			{ id, offset: 0 },
+			undefined,
+			undefined,
+			fakeContext(sessionDir),
+		);
+		if (process.platform === "win32") {
+			await expect(recall).rejects.toThrow(/not a regular file/u);
+		} else {
+			await expect(recall).rejects.toMatchObject({ code: "ELOOP" });
+		}
+	});
+
+	it("aligns a recall offset that lands inside a character", async () => {
+		const sessionDir = await sessionRoot();
+		// Each "☾" is three UTF-8 bytes, so offsets 1 and 2 are inside the first one.
+		const body = `☾☾☾ moon log\n${repeatPastThreshold("observation bytes\n")}`;
+		const message = toolResult(body);
+		const id = observationId(message);
+		const pi = observationPackPi();
+		await project(pi, message, sessionDir, 3);
+
+		for (const requested of [1, 2]) {
+			const result = await pi
+				.tool("obs_recall")
+				.execute("recall-1", { id, offset: requested }, undefined, undefined, fakeContext(sessionDir));
+			const text = result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
+
+			expect(text).not.toContain("�");
+			expect(text).toContain(`offset=3`);
+			expect(result.details).toMatchObject({ offset: 3 });
+			expect(text.split("\n").slice(2).join("\n").startsWith("☾☾ moon log")).toBe(true);
+		}
 	});
 
 	it("returns the exact original bytes across paged recall", async () => {
@@ -293,7 +376,7 @@ describe("observation pack", () => {
 		expect(Buffer.from(recalled, "utf8")).toEqual(Buffer.from(body, "utf8"));
 	});
 
-	it("fails storage closed when the observation directory is a symlink", async () => {
+	it.skipIf(process.platform === "win32")("fails storage closed when the observation directory is a symlink", async () => {
 		const sessionDir = await sessionRoot();
 		const targetDir = await sessionRoot();
 		await mkdir(join(sessionDir, "sol-pi", SESSION_ID, "observation-pack"), { recursive: true });
@@ -306,6 +389,37 @@ describe("observation pack", () => {
 		expect(await project(observationPackPi(), message, sessionDir, 3)).toEqual([body, body, body]);
 		expect(errors.some((error) => error.includes(id) && error.includes("not a regular directory"))).toBe(true);
 		await expect(readFile(join(targetDir, `${id}.txt`))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("excerpts a payload whose only line is longer than the excerpt budget", async () => {
+		const sessionDir = await sessionRoot();
+		// One line: minified JSON, `jq -c` output, a curl body.
+		const body = `HEAD-MARKER${"-pad".repeat(5_000)}TAIL-MARKER`;
+		const projected = await project(observationPackPi(), toolResult(body), sessionDir, 3);
+		const placeholder = projected[2] ?? "";
+		const [, headExcerpt, , tailExcerpt] = placeholder.split("\n").slice(7);
+
+		expect(placeholder).toMatch(/^\[large tool result replaced/u);
+		expect(headExcerpt).toContain("HEAD-MARKER");
+		expect(tailExcerpt).toContain("TAIL-MARKER");
+		expect(Buffer.byteLength(headExcerpt ?? "", "utf8")).toBe(512);
+		expect(Buffer.byteLength(tailExcerpt ?? "", "utf8")).toBe(512);
+		expect(placeholder).toContain("[no complete line fits; first 512 bytes]");
+		expect(placeholder).toContain("[middle omitted; no complete line fits; last 512 bytes]");
+	});
+
+	it("cuts a line-less excerpt on a UTF-8 boundary", async () => {
+		const sessionDir = await sessionRoot();
+		const body = "☾".repeat(20_000);
+		const projected = await project(observationPackPi(), toolResult(body), sessionDir, 3);
+		const [, headExcerpt, , tailExcerpt] = (projected[2] ?? "").split("\n").slice(7);
+
+		for (const excerpt of [headExcerpt ?? "", tailExcerpt ?? ""]) {
+			expect(excerpt.length).toBeGreaterThan(0);
+			expect(excerpt).not.toContain("�");
+			expect(Buffer.byteLength(excerpt, "utf8")).toBeLessThanOrEqual(512);
+			expect(excerpt).toBe("☾".repeat(excerpt.length));
+		}
 	});
 
 	it("keeps the mutation confirmation and then_run marker of a fused write", async () => {
@@ -331,6 +445,31 @@ describe("observation pack", () => {
 		expect(resultText(result!)).toMatch(/Successfully wrote 12 bytes to target\.ts/u);
 		expect(resultText(result!)).toMatch(/\[then_run:succeeded\]/u);
 		expect(result).toMatchObject({ details: { patch: "preserved" }, isError: false });
+	});
+
+	it("packs a payload that only mentions the receipt prefix inside a line", async () => {
+		const sessionDir = await sessionRoot();
+		const large = repeatPastThreshold("build log\n");
+		// The exemption is for a receipt, not for any line that names one.
+		const mention = toolResult(`grep -n sol_pi_evidence_receipt_v1 src\n${large}`);
+		const trailing = toolResult(`sol_pi_evidence_receipt_v1 (from an earlier turn)\n${large}`, {
+			toolCallId: "call-2",
+		});
+
+		for (const message of [mention, trailing]) {
+			const projected = await project(observationPackPi(), message, sessionDir, 3);
+			expect(projected[2]).toMatch(/^\[large tool result replaced/u);
+		}
+	});
+
+	it("counts lines the same way for astral characters", async () => {
+		const sessionDir = await sessionRoot();
+		// One surrogate pair per line: a UTF-16 scan and a code-point scan must agree.
+		const body = repeatPastThreshold("𝄞 clef line\n");
+		const projected = await project(observationPackPi(), toolResult(body), sessionDir, 3);
+
+		const reported = Number((projected[2] ?? "").match(/original_lines: (\d+)/u)?.[1]);
+		expect(reported).toBe(body.split("\n").length - 1);
 	});
 
 	it("passes through errors, mixed content, and reducer receipts", async () => {

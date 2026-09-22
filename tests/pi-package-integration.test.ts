@@ -75,7 +75,9 @@ it("loads the package entrypoint and executes fused tools in an all-enabled Pi s
 		const errors: unknown[] = [];
 		await session.bindExtensions({ onError: (error) => errors.push(error) });
 		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["edit", "write", "obs_recall", "update_plan"]));
-		const solPi = resourceLoader.getExtensions().extensions.find((extension) => extension.path.endsWith(join("src", "sol-pi", "index.ts")));
+		const solPi = resourceLoader.getExtensions().extensions.find((extension) =>
+			extension.path.replaceAll("\\", "/").endsWith("src/sol-pi/index.ts"),
+		);
 		expect(solPi?.handlers.has("tool_result")).toBe(true);
 		expect(solPi?.handlers.has("context")).toBe(true);
 		expect(solPi?.handlers.has("agent_settled")).toBe(true);
