@@ -2,7 +2,7 @@
 
 SoL-Pi is developed and tested against `@earendil-works/pi-coding-agent` 0.85.1. Earlier validation also covered 0.84.2; the Windows changes have not been revalidated on that release. Previous checks covered the public API surface of Pi 0.81.1, the base used by the original Pi fork; they are not a current full-suite compatibility guarantee. The runtime range is deliberately expressed as a peer dependency because Pi owns installation and upgrade of its packages; it is not a guarantee for every Pi version.
 
-SoL-Pi declares Pi package peers at `>=0.84.2 <0.86.0`, matching the fully validated runtime range without admitting unverified pre-1.0 minor releases. Pi 0.81.1 remains an API compatibility check rather than a supported runtime baseline. SoL-Pi imports only public package exports:
+SoL-Pi declares Pi package peers at `>=0.84.2 <0.86.0`. Pi 0.85.1 is the validated runtime for this filtered branch; the declared lower bound reflects earlier compatibility checks, not a new full-suite run of this branch on 0.84.2. Pi 0.81.1 remains an API compatibility check rather than a supported runtime baseline. SoL-Pi imports only public package exports:
 
 - `createEditToolDefinition`
 - `createWriteToolDefinition`
@@ -27,9 +27,9 @@ The queue covers only fused operations registered by this SoL-Pi instance. Exter
 
 ObservationPack changes only the messages projected through the public `context` event. Stored session history remains intact. Original bytes and the JSONL ledger live under the session-derived SoL-Pi directory.
 
-The directory returned by Pi's `SessionManager.getSessionDir()` is the trusted storage boundary; Pi's session directory and its ancestors must remain under the user's control. Before creating or opening an object, ObservationPack checks every descendant directory (`sol-pi`, the session id, `observation-pack`, and `objects`). Missing directories are created individually, and each component must be an ordinary directory before traversal continues. The complete descendant chain is checked again after object open, before reading or writing payload bytes. Pre-existing symlinks and Windows junctions reported as symbolic links by Node's `lstat()` are rejected, including a linked runtime root.
+The directory returned by Pi's `SessionManager.getSessionDir()` is the trusted storage boundary; Pi's session directory and its ancestors must remain under the user's control. ObservationPack checks the final object directory when storing a result and rejects symbolic links at the object path before reading or reusing it.
 
-Object access also uses `O_NOFOLLOW` where available, and requires the pathname and open handle to identify the same regular file. These checks detect the tested directory substitutions and path-restoration races. Node's portable filesystem API does not provide directory-handle-relative traversal: the checks are not an atomic defense against a process that can repeatedly replace storage ancestors during validation. Other Windows reparse-point types are not covered by the junction tests. Native Windows execution remains an outstanding validation gate; the simulated no-`O_NOFOLLOW` lifecycle does not establish native reparse-point safety.
+Object access uses `O_NOFOLLOW` where available and compares the opened handle with the path's pre-open identity. These object checks are not an atomic defense against processes replacing parent directories. This filtered branch does not include the later descendant-directory-chain checks.
 
 ## Evidence-Preserving Reducer
 
@@ -39,17 +39,6 @@ All persistent paths use `SessionManager.getSessionDir()` and `getSessionId()`, 
 
 The unpublished shared artifact layout is not read or migrated. Each session starts from its own `<sessionDir>/sol-pi/<sessionId>/` directory.
 
-Accepted reducer receipts are reused from a session-local, in-memory LRU cache
-of at most 64 entries. Reuse requires identical source bytes, command, error
-status, configured reducer provider/model, output limit, receipt schema, and
-reducer instructions. Every hit still verifies the source archive and validates
-the quoted evidence, then rebuilds the receipt for the current tool result.
-Hits record a `cache_hit` journal event and zero new reducer token usage; they do
-not record another provider response. Failed or rejected reductions are never
-cached. The cache adds no files and is empty after a process restart. Concurrent
-first occurrences may still make separate model calls; this cache reuses only
-completed, accepted results. Actual cost savings depend on repeated identical
-logs and the configured model's billing.
 
 ## Online Context Compact
 
