@@ -84,14 +84,21 @@ async function storeRoot(): Promise<string> {
 	return value;
 }
 
-it("rejects a symlink in place of an existing content-addressed archive object", async () => {
+it("rejects a symlink in place of an existing content-addressed archive object", async (context) => {
 	const root = await storeRoot();
 	const body = `ERROR symlink archive\n${"diagnostic\n".repeat(400)}`;
 	const first = await archiveBody(root, body);
 	const target = join(root, "same-content-target.txt");
 	await writeFile(target, body, "utf8");
 	await rm(first.path);
-	await symlink(target, first.path);
+	try {
+		await symlink(target, first.path);
+	} catch (error) {
+		if (process.platform === "win32" && error instanceof Error && "code" in error && error.code === "EPERM") {
+			context.skip();
+		}
+		throw error;
+	}
 
 	await expect(archiveBody(root, body)).rejects.toThrow(
 		process.platform === "win32" ? /atomic no-follow archive access is unavailable/u : /not a regular file/u,
@@ -262,7 +269,7 @@ describe("evidence-preserving reducer", () => {
 				source_sha256: sourceHash(input),
 				status: "failure",
 				uncertain: false,
-				evidence: [{ kind: "failure", quote: signal }],
+				evidence: [{ kind: "failure", quote: signal }, { kind: "summary", quote: "diagnostic output" }],
 			})),
 		);
 
