@@ -48,9 +48,11 @@ const WRITE_THEN_RUN_DESCRIPTION =
 type ShellPathLoader = (ctx: ExtensionContext) => string | undefined;
 
 function loadConfiguredShellPath(ctx: ExtensionContext): string | undefined {
-	return SettingsManager.create(ctx.cwd, getAgentDir(), {
+	const settings = SettingsManager.create(ctx.cwd, getAgentDir(), {
 		projectTrusted: ctx.isProjectTrusted?.() ?? false,
-	}).getShellPath();
+	});
+	if (settings.drainErrors().length > 0) return undefined;
+	return settings.getShellPath();
 }
 
 function hasSuccessfulThenRun(result: { content: readonly unknown[] }): boolean {
@@ -98,15 +100,14 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 	const baseEdit = memoizeByCwd((cwd: string) => createEditToolDefinition(cwd, options.editOptions));
 	const baseWrite = memoizeByCwd((cwd: string) => createWriteToolDefinition(cwd, options.writeOptions));
 	const loadShellPath = options.loadShellPath ?? loadConfiguredShellPath;
-	const configuredBashOptions = new Map<string, BashToolOptions>();
-	const bashOptions = (ctx: ExtensionContext): BashToolOptions => {
-		if (options.bashOptions !== undefined) return options.bashOptions;
-		const cacheKey = `${ctx.cwd}\0${ctx.isProjectTrusted?.() ?? false}`;
-		const cached = configuredBashOptions.get(cacheKey);
-		if (cached) return cached;
-		const resolved = { shellPath: loadShellPath(ctx) };
-		configuredBashOptions.set(cacheKey, resolved);
-		return resolved;
+	const bashOptions = (ctx: ExtensionContext): BashToolOptions | undefined => {
+		if (options.bashOptions?.shellPath) return options.bashOptions;
+		try {
+			const shellPath = loadShellPath(ctx);
+			return shellPath ? { ...options.bashOptions, shellPath } : options.bashOptions;
+		} catch {
+			return options.bashOptions;
+		}
 	};
 
 	return (pi: ExtensionAPI) => {
@@ -131,7 +132,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 					toolCallId,
 					absolutePath: resolveToolPath(ctx.cwd, input.path),
 					thenRun: then_run,
-					bashOptions: bashOptions(ctx),
+					bashOptions: then_run ? bashOptions(ctx) : options.bashOptions,
 					signal,
 					createBash: options.createBashToolDefinition,
 					ctx,
@@ -163,7 +164,7 @@ export function createActionFusionExtension(options: ActionFusionOptions = {}): 
 					toolCallId,
 					absolutePath: resolveToolPath(ctx.cwd, input.path),
 					thenRun: then_run,
-					bashOptions: bashOptions(ctx),
+					bashOptions: then_run ? bashOptions(ctx) : options.bashOptions,
 					signal,
 					ctx,
 					createBash: options.createBashToolDefinition,
