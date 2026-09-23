@@ -101,7 +101,7 @@ it("rejects a symlink in place of an existing content-addressed archive object",
 	}
 
 	await expect(archiveBody(root, body)).rejects.toThrow(
-		process.platform === "win32" ? /atomic no-follow archive access is unavailable/u : /not a regular file/u,
+		process.platform === "win32" ? /Atomic no-follow archive access is unavailable/u : /not a regular file/u,
 	);
 });
 
