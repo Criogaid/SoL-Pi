@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BashOperations, ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type BashOperations, type ExtensionAPI, type ExtensionContext, SettingsManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	type ActionFusionOptions,
 	assertUnchangedBeforeCommand,
@@ -246,6 +246,58 @@ describe("action fusion then_run", () => {
 
 		expect(loadShellPath).not.toHaveBeenCalled();
 		expect(createBashToolDefinition).toHaveBeenCalledWith(dir, explicitOptions);
+	});
+
+	it("merges Pi shell settings with other bash options and falls back on lookup errors", async () => {
+		const dir = await createTempDir();
+		const operations: BashOperations = { exec: async () => ({ exitCode: 0 }) };
+		const loadShellPath = vi.fn(() => join(dir, "settings-shell"));
+		const createBashToolDefinition = vi.fn((_cwd, _options) => ({
+			name: "bash",
+			execute: async () => ({ content: [], details: undefined }),
+		})) as unknown as NonNullable<ActionFusionOptions["createBashToolDefinition"]>;
+		const { write } = loadFusedTools({ bashOptions: { operations }, loadShellPath, createBashToolDefinition });
+		const ctx = createContext(dir);
+
+		await write.execute("plain", { path: "plain.txt", content: "plain" }, undefined, undefined, ctx);
+		expect(loadShellPath).not.toHaveBeenCalled();
+		await write.execute(
+			"fused",
+			{ path: "fused.txt", content: "fused", then_run: { command: "check" } },
+			undefined, undefined, ctx,
+		);
+		expect(createBashToolDefinition).toHaveBeenCalledWith(dir, { operations, shellPath: join(dir, "settings-shell") });
+
+		loadShellPath.mockImplementation(() => { throw new Error("settings unavailable"); });
+		await write.execute(
+			"fallback",
+			{ path: "fallback.txt", content: "fallback", then_run: { command: "check" } },
+			undefined, undefined, ctx,
+		);
+		expect(createBashToolDefinition).toHaveBeenLastCalledWith(dir, { operations });
+	});
+
+	it("falls back when Pi settings cannot be loaded", async () => {
+		const dir = await createTempDir();
+		const settings = vi.spyOn(SettingsManager, "create").mockReturnValue({
+			drainErrors: () => [new Error("invalid settings")],
+			getShellPath: () => { throw new Error("should not read invalid settings"); },
+		} as unknown as SettingsManager);
+		const createBashToolDefinition = vi.fn((_cwd, _options) => ({
+			name: "bash",
+			execute: async () => ({ content: [], details: undefined }),
+		})) as unknown as NonNullable<ActionFusionOptions["createBashToolDefinition"]>;
+		try {
+			const { write } = loadFusedTools({ createBashToolDefinition });
+			await write.execute(
+				"invalid-settings",
+				{ path: "target.txt", content: "content", then_run: { command: "check" } },
+				undefined, undefined, createContext(dir, { isProjectTrusted: () => false }),
+			);
+			expect(createBashToolDefinition).toHaveBeenCalledWith(dir, undefined);
+		} finally {
+			settings.mockRestore();
+		}
 	});
 
 	it("announces savings only after a fused command succeeds in TUI mode", async () => {
