@@ -467,11 +467,12 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						throw error;
 					}
 					if (context.isIdle() && nextContinuation === continuation) {
+						// Pi 0.87 defers turns queued from agent_settled until every handler returns.
 						nextContinuation = undefined;
 						continuation.resolve();
-						throw new Error("Online context compact continuation did not start");
+					} else {
+						await continuation.promise;
 					}
-					await continuation.promise;
 				}
 			} finally {
 				compactionInFlight = false;

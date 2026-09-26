@@ -101,7 +101,8 @@ describe("Online Context Compact extension", () => {
 		).resolves.toBeUndefined();
 	});
 
-	it("stops at an eligible completed-step boundary, then compacts after settlement", async () => {
+	for (const continuationStart of ["eager", "deferred"] as const) {
+		it(`stops at an eligible completed-step boundary, then compacts with a ${continuationStart} continuation`, async () => {
 		const manager = new FakeSessionManager();
 		manager.appendMessage({ role: "user", content: `old ${"x".repeat(2_000)}`, timestamp: Date.now() });
 		manager.appendMessage(assistant(`work ${"y".repeat(2_000)}`));
@@ -110,7 +111,7 @@ describe("Online Context Compact extension", () => {
 		let idle = true;
 		const sendMessage = pi.sendMessage.bind(pi);
 		vi.spyOn(pi, "sendMessage").mockImplementation((message, options) => {
-			idle = false;
+			if (continuationStart === "eager") idle = false;
 			sendMessage(message, options);
 		});
 		const abort = vi.fn();
@@ -202,7 +203,7 @@ describe("Online Context Compact extension", () => {
 
 		expect(compactCalls).toHaveLength(1);
 		expect(compactCalls[0]?.customInstructions).toBe(BOUNDARY_COMPACTION_INSTRUCTIONS);
-		expect(firstSettlementFinished).toBe(false);
+		if (continuationStart === "eager") expect(firstSettlementFinished).toBe(false);
 		expect(pi.sentMessages).toEqual([
 			{
 				message: {
@@ -214,13 +215,16 @@ describe("Online Context Compact extension", () => {
 			},
 		]);
 
-		idle = true;
-		await pi.emit("agent_settled", { type: "agent_settled" }, context);
-		await firstSettlement;
+		if (continuationStart === "eager") {
+			idle = true;
+			await pi.emit("agent_settled", { type: "agent_settled" }, context);
+		}
+		await expect(firstSettlement).resolves.toBeUndefined();
 		expect(firstSettlementFinished).toBe(true);
 		expect(await pi.emit("session_before_tree", { type: "session_before_tree" }, context)).toBeUndefined();
 		expect(restoreOnlineState(manager.entries)).toMatchObject({ nativeCompactionCount: 1, pendingProgress: [] });
-	});
+		});
+	}
 });
 
 function buildSessionMessages(): AgentMessage[] {
