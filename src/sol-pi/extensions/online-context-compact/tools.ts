@@ -55,6 +55,7 @@ export function registerOnlineTools(pi: ExtensionAPI, handlers: OnlineToolHandle
 		promptGuidelines: [
 			"Send the complete plan on every update_plan call.",
 			"Keep at most one step in_progress and mark finished steps completed.",
+			"Keep a step's id and goal stable from pending or in_progress through completed; imported completed steps establish a baseline.",
 			"When completing a step, include concise progress evidence when available.",
 		],
 		renderShell: "self",

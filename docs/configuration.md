@@ -64,6 +64,8 @@ The release entry uses two runtime inputs:
 
 The configured ratio stays fixed for the loaded extension. The mechanism stores its current plan, progress summaries, request horizon, context growth, and compaction debt as versioned custom entries in Pi's session log. After a successful compaction it sends one hidden, generic message with `triggerTurn: true`, which starts a new turn and instructs the assistant to rebuild its plan. A settlement barrier keeps print and JSON modes in the same Pi invocation until that continuation settles, so callers do not need to resume the session or inject `Continue working`. Cancelling or exiting does not schedule an automatic continuation. The mechanism creates no separate Online Context Compact files. The programmatic factory exposes only a matching retained-tail value for installations whose Pi compaction setting differs from the default.
 
+A boundary requires a previously observed `pending` or `in_progress` step to become `completed` with the same id and goal. When no previous plan exists, as in a fresh session or after correction or compaction, the first plan establishes a baseline; completed steps first seen there do not imply new progress. Resuming an existing session still compares against its restored plan. Replaying or renaming completed steps does not create a boundary. Real completion transitions after that baseline remain eligible for compaction.
+
 ## Pi integration
 
 SoL-Pi reads no dedicated environment variables. Evidence-Preserving Reducer resolves its configured reducer provider/model through `ExtensionContext.modelRegistry` and uses Pi-managed authentication. If the configured reducer model is unavailable or the nested model call fails, the original tool result continues unchanged.

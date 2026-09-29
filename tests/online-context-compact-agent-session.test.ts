@@ -35,14 +35,17 @@ const PROGRESS = {
 	decisions: ["kept the implementation small"],
 };
 
+const PLAN_REPLAY_COUNT = 3;
+
 type CompactionRequest = { customInstructions?: string; reason: string };
 
 async function runCompactionScenario(
 	requestedCompactions: 1 | 2,
-	{ mixedBatch = false, cancelAtBoundary = false, failCompaction = false }: {
+	{ mixedBatch = false, cancelAtBoundary = false, failCompaction = false, replayPlan }: {
 		mixedBatch?: boolean;
 		cancelAtBoundary?: boolean;
 		failCompaction?: boolean;
+		replayPlan?: "same-ids" | "new-ids";
 	} = {},
 ): Promise<void> {
 	const cwd = await mkdtemp(join(tmpdir(), "sol-pi-occ-session-"));
@@ -75,6 +78,18 @@ async function runCompactionScenario(
 					),
 					fauxAssistantMessage(donePlan, { stopReason: "toolUse" }),
 				);
+			}
+			if (replayPlan) {
+				const restored = [
+					{ ...DONE[0], id: replayPlan === "new-ids" ? `restored-${ordinal}` : DONE[0].id },
+					{ id: "verify", goal: "verify the result", status: "in_progress" },
+				];
+				for (let replay = 0; replay < PLAN_REPLAY_COUNT; replay++) {
+					responses.push(fauxAssistantMessage(
+						fauxToolCall("update_plan", { steps: restored }, { id: `replay-${ordinal}-${replay}` }),
+						{ stopReason: "toolUse" },
+					));
+				}
 			}
 		}
 		responses.push(async () => {
@@ -230,7 +245,7 @@ async function runCompactionScenario(
 					entry.display === false,
 			),
 		).toHaveLength(requestedCompactions);
-		expect(faux.state.callCount).toBe(requestedCompactions * (mixedBatch ? 1 : 2) + 1);
+		expect(faux.state.callCount).toBe(requestedCompactions * ((mixedBatch ? 1 : 2) + (replayPlan ? PLAN_REPLAY_COUNT : 0)) + 1);
 		expect(session.getLastAssistantText()).toBe(finalReply);
 		expect(settledCount).toBe(requestedCompactions + 1);
 		expect(session.isStreaming).toBe(false);
@@ -256,6 +271,14 @@ describe("Online Context Compact with a real AgentSession", () => {
 
 	it("reports a native compaction failure without scheduling a continuation", async () => {
 		await runCompactionScenario(1, { failCompaction: true });
+	}, 10_000);
+
+	it.each(["same-ids", "new-ids"] as const)("does not recompact a restored plan with %s", async (replayPlan) => {
+		await runCompactionScenario(1, { replayPlan });
+	}, 10_000);
+
+	it("accepts real progress after plan restoration without counting the restoration", async () => {
+		await runCompactionScenario(2, { replayPlan: "same-ids" });
 	}, 10_000);
 
 	it("settles two consecutive automatic compactions before the original prompt returns", async () => {

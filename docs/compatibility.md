@@ -82,3 +82,5 @@ Action Fusion's `then_run` commands require Bash on Windows, available through G
 When reusing or recalling an observation, ObservationPack rejects a symbolic link before opening it and checks the opened file's identity. Native `O_NOFOLLOW` remains enabled where available. The additional `lstat()` and file-handle `stat()` run on all platforms; these checks add filesystem I/O and are not an atomic defense against processes that can replace parent directories or modify file contents.
 
 Windows archive confidentiality depends on the session directory's inherited ACLs; SoL-Pi does not provision Windows ACLs.
+
+The real `AgentSession` regression suite also checks repeated post-compaction plan imports with unchanged and renamed step ids. Imported completed steps do not create new boundaries; subsequent observed completion transitions still compact and settle within the original prompt invocation.

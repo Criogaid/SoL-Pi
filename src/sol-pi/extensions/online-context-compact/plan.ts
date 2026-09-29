@@ -2,6 +2,9 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  */
+/** Owns plan validation and progress detection. Only observed state transitions
+ * for the same step and goal create compaction boundaries; imported plans do not.
+ */
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 
@@ -62,7 +65,9 @@ export function analyzePlanTransition(previous: readonly PlanStep[], next: reado
 
 	for (const step of next) {
 		const prior = previousById.get(step.id);
-		if ((!prior || prior.status !== "completed") && step.status === "completed") completedSteps.push(step);
+		if (prior && prior.goal === step.goal && prior.status !== "completed" && step.status === "completed") {
+			completedSteps.push(step);
+		}
 		if (prior && prior.goal !== step.goal) {
 			advice.push(`Plan step ${JSON.stringify(step.id)} changed goal; reuse an id only for the same goal.`);
 		}

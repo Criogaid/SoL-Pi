@@ -123,6 +123,8 @@ They archive eligible source material in this directory. The archived copies rem
 
 Online Context Compact stores its state in Pi's session log. After a successful compaction, it starts a new turn and automatically continues the active task. Cancelling the run or exiting Pi does not trigger automatic continuation.
 
+Compaction boundaries require an observed plan step to move from `pending` or `in_progress` to `completed` with the same id and goal. Importing completed steps, including when rebuilding a plan after compaction, records the plan without creating a new boundary.
+
 Evidence-Preserving Reducer may send eligible diagnostic-log content to its configured reducer model using Pi-managed authentication. Review [SECURITY.md](SECURITY.md) before enabling it. Do not enable remote reduction for logs that must remain local.
 
 ## Documentation

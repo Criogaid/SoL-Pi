@@ -42,6 +42,22 @@ describe("Online Context Compact plans", () => {
 		expect(analyzePlanTransition(DONE, DONE).completedSteps).toEqual([]);
 	});
 
+	it("treats an imported completed plan as a baseline", () => {
+		expect(analyzePlanTransition([], DONE).completedSteps).toEqual([]);
+	});
+
+	it("does not invent progress when completed work is rekeyed", () => {
+		const rekeyed = [{ ...DONE[0], id: "restored-build" }];
+		expect(analyzePlanTransition(DONE, rekeyed).completedSteps).toEqual([]);
+	});
+
+	it("requires a completion to refer to the same observed goal", () => {
+		const changed = [{ ...DONE[0], goal: "a different task" }];
+		const transition = analyzePlanTransition(OPEN, changed);
+		expect(transition.completedSteps).toEqual([]);
+		expect(transition.advice.join("\n")).toContain("changed goal");
+	});
+
 	it("flags ambiguous active work and reused ids with changed goals", () => {
 		const transition = analyzePlanTransition(
 			[{ id: "a", goal: "old", status: "in_progress" }],
