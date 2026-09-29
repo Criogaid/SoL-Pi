@@ -51,7 +51,7 @@ async function runPlan(pi: FakePi, context: ExtensionContext, id: string, params
 		signal: undefined,
 		onUpdate: undefined,
 		context: ExtensionContext,
-	) => Promise<{ content: unknown[]; details: Readonly<Record<string, unknown>> }>;
+	) => Promise<{ content: unknown[]; details: Readonly<Record<string, unknown>>; terminate?: boolean }>;
 	return await execute(id, params, undefined, undefined, context);
 }
 
@@ -100,6 +100,85 @@ describe("Online Context Compact extension", () => {
 			pi.emit("before_provider_request", { type: "before_provider_request", payload: {} }, context),
 		).resolves.toBeUndefined();
 	});
+
+	it("continues normally when a completed boundary does not pass the economic gate", async () => {
+		const pi = new FakePi();
+		createOnlineContextCompactExtension({ cacheWriteReadRatio: 12.5 })(pi.asExtensionApi());
+		const abort = vi.fn();
+		const context = fakeContext(pi.sessionManager, {
+			abort,
+			getContextUsage: () => ({ tokens: 100, contextWindow: 200_000, percent: 0.05 }),
+		});
+		await pi.emit("session_start", { type: "session_start" }, context);
+		await runPlan(pi, context, "plan-open", { steps: OPEN });
+		const planResult = await runPlan(pi, context, "plan-done", { steps: DONE, progress: PROGRESS });
+
+		expect(planResult.terminate).toBeUndefined();
+		expect(planResult.details).toMatchObject({ boundary: true, progress_recorded: true });
+		await pi.emit(
+			"turn_end",
+			{
+				type: "turn_end",
+				turnIndex: 1,
+				message: assistant("boundary"),
+				toolResults: [{
+					role: "toolResult",
+					toolCallId: "plan-done",
+					toolName: "update_plan",
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+					timestamp: Date.now(),
+				}],
+			},
+			context,
+		);
+		expect(abort).not.toHaveBeenCalled();
+	});
+
+	for (const rejectedBoundary of ["cancelled run", "failed plan result"] as const) {
+		it(`does not compact after a ${rejectedBoundary}`, async () => {
+			const manager = new FakeSessionManager();
+			manager.appendMessage({ role: "user", content: `old ${"x".repeat(2_000)}`, timestamp: Date.now() });
+			manager.appendMessage(assistant(`work ${"y".repeat(2_000)}`));
+			const pi = new FakePi(manager);
+			createOnlineContextCompactExtension({ cacheWriteReadRatio: 0, keepRecentTokens: 1 })(pi.asExtensionApi());
+			const controller = new AbortController();
+			const abort = vi.fn();
+			const context = fakeContext(manager, {
+				abort,
+				isIdle: () => true,
+				signal: controller.signal,
+				getSystemPrompt: () => "test prompt",
+				getContextUsage: () => ({ tokens: 195_000, contextWindow: 200_000, percent: 97.5 }),
+			});
+			await pi.emit("session_start", { type: "session_start" }, context);
+			await pi.emitContext(buildSessionMessages(), context);
+			await pi.emit("before_provider_request", { type: "before_provider_request", payload: {} }, context);
+			await runPlan(pi, context, "plan-open", { steps: OPEN });
+			await runPlan(pi, context, "plan-done", { steps: DONE, progress: PROGRESS });
+			if (rejectedBoundary === "cancelled run") controller.abort();
+			await pi.emit(
+				"turn_end",
+				{
+					type: "turn_end",
+					turnIndex: 1,
+					message: assistant("boundary"),
+					toolResults: [{
+						role: "toolResult",
+						toolCallId: "plan-done",
+						toolName: "update_plan",
+						content: [{ type: "text", text: "done" }],
+						isError: rejectedBoundary === "failed plan result",
+						timestamp: Date.now(),
+					}],
+				},
+				context,
+			);
+			await pi.emit("agent_settled", { type: "agent_settled" }, context);
+			expect(abort).not.toHaveBeenCalled();
+			expect(pi.sentMessages).toEqual([]);
+		});
+	}
 
 	for (const continuationStart of ["eager", "deferred"] as const) {
 		it(`stops at an eligible completed-step boundary, then compacts with a ${continuationStart} continuation`, async () => {
@@ -184,6 +263,7 @@ describe("Online Context Compact extension", () => {
 		);
 
 		expect(planResult.details).toMatchObject({ boundary: true, progress_recorded: true });
+		expect(planResult.terminate).toBeUndefined();
 		expect(abort).toHaveBeenCalledOnce();
 		expect(compactCalls).toEqual([]);
 

@@ -37,7 +37,14 @@ const PROGRESS = {
 
 type CompactionRequest = { customInstructions?: string; reason: string };
 
-async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void> {
+async function runCompactionScenario(
+	requestedCompactions: 1 | 2,
+	{ mixedBatch = false, cancelAtBoundary = false, failCompaction = false }: {
+		mixedBatch?: boolean;
+		cancelAtBoundary?: boolean;
+		failCompaction?: boolean;
+	} = {},
+): Promise<void> {
 	const cwd = await mkdtemp(join(tmpdir(), "sol-pi-occ-session-"));
 	const agentDir = join(cwd, "agent");
 	await mkdir(agentDir);
@@ -53,33 +60,46 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 		const responses: FauxResponseStep[] = [];
 		for (let ordinal = 1; ordinal <= requestedCompactions; ordinal++) {
 			const openPlan = fauxToolCall("update_plan", { steps: OPEN }, { id: `plan-open-${ordinal}` });
-			responses.push(
-				fauxAssistantMessage(
-					ordinal === 1 ? openPlan : [fauxText(`second phase work ${"z".repeat(6_000)}`), openPlan],
-					{ stopReason: "toolUse" },
-				),
-				fauxAssistantMessage(
-					fauxToolCall(
-						"update_plan",
-						{ steps: DONE, progress: PROGRESS },
-						{ id: `plan-done-${ordinal}` },
-					),
-					{ stopReason: "toolUse" },
-				),
+			const donePlan = fauxToolCall(
+				"update_plan",
+				{ steps: DONE, progress: PROGRESS },
+				{ id: `plan-done-${ordinal}` },
 			);
+			if (mixedBatch) {
+				responses.push(fauxAssistantMessage([openPlan, donePlan], { stopReason: "toolUse" }));
+			} else {
+				responses.push(
+					fauxAssistantMessage(
+						ordinal === 1 ? openPlan : [fauxText(`second phase work ${"z".repeat(6_000)}`), openPlan],
+						{ stopReason: "toolUse" },
+					),
+					fauxAssistantMessage(donePlan, { stopReason: "toolUse" }),
+				);
+			}
 		}
 		responses.push(async () => {
+			if (failCompaction) throw new Error("simulated compaction failure");
 			await new Promise((resolve) => setTimeout(resolve, 80));
 			return fauxAssistantMessage(finalReply);
 		});
 		faux.setResponses(responses);
 
+		let cancelledTurnObserved = false;
 		const compactionRequests: CompactionRequest[] = [];
 		const extension: ExtensionFactory = (pi) => {
 			pi.registerProvider(faux.provider);
 			createOnlineContextCompactExtension({ cacheWriteReadRatio: 0, keepRecentTokens: 150 })(pi);
+			if (cancelAtBoundary) {
+				pi.on("tool_result", (event, context) => {
+					if (event.toolCallId === "plan-done-1") context.abort();
+				});
+				pi.on("turn_end", (_event, context) => {
+					cancelledTurnObserved = context.signal?.aborted === true;
+				});
+			}
 			pi.on("session_before_compact", (event) => {
 				compactionRequests.push({ customInstructions: event.customInstructions, reason: event.reason });
+				if (failCompaction) return;
 				return {
 					compaction: {
 						summary: `deterministic compacted history ${"s".repeat(6_000)}`,
@@ -127,6 +147,8 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 			settingsManager,
 		});
 		session = created.session;
+		const extensionErrors: string[] = [];
+		session.extensionRunner.onError(({ error }) => extensionErrors.push(error));
 		let settledCount = 0;
 		session.subscribe((event) => {
 			if (event.type === "agent_settled") settledCount++;
@@ -136,6 +158,42 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 			expandPromptTemplates: false,
 			source: "interactive",
 		});
+		if (failCompaction) {
+			expect(extensionErrors.some((error) => error.includes("simulated compaction failure"))).toBe(true);
+			expect(compactionRequests).toHaveLength(1);
+			const branch = sessionManager.getBranch();
+			expect(branch.some((entry) => entry.type === "compaction")).toBe(false);
+			expect(
+				branch.some((entry) => entry.type === "custom_message" && entry.customType === "sol-pi-online-context-compact"),
+			).toBe(false);
+			expect(faux.state.callCount).toBe(3);
+			expect(settledCount).toBe(1);
+			expect(session.isIdle).toBe(true);
+			return;
+		}
+		expect(extensionErrors).toEqual([]);
+		if (cancelAtBoundary) {
+			expect(compactionRequests).toEqual([]);
+			const branch = sessionManager.getBranch();
+			expect(cancelledTurnObserved).toBe(true);
+			expect(
+				branch.some(
+					(entry) =>
+						entry.type === "message" &&
+						entry.message.role === "toolResult" &&
+						entry.message.toolCallId === "plan-done-1" &&
+						!entry.message.isError,
+				),
+			).toBe(true);
+			expect(branch.some((entry) => entry.type === "compaction")).toBe(false);
+			expect(
+				branch.some((entry) => entry.type === "custom_message" && entry.customType === "sol-pi-online-context-compact"),
+			).toBe(false);
+			expect(faux.state.callCount).toBe(2);
+			expect(settledCount).toBe(1);
+			expect(session.isIdle).toBe(true);
+			return;
+		}
 
 		expect(compactionRequests).toEqual(
 			Array.from({ length: requestedCompactions }, () => ({
@@ -145,6 +203,24 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 		);
 		const branch = sessionManager.getBranch();
 		expect(branch.filter((entry) => entry.type === "compaction")).toHaveLength(requestedCompactions);
+		const assistantFailures = branch.flatMap((entry) =>
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			(entry.message.stopReason === "error" || entry.message.stopReason === "aborted")
+				? [{
+						stopReason: entry.message.stopReason,
+						errorMessage: entry.message.errorMessage,
+						content: entry.message.content,
+					}]
+				: [],
+		);
+		expect(assistantFailures).toEqual(
+			Array.from({ length: requestedCompactions }, () => ({
+				stopReason: "error",
+				errorMessage: "This operation was aborted",
+				content: [],
+			})),
+		);
 		expect(
 			branch.filter(
 				(entry) =>
@@ -154,7 +230,7 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 					entry.display === false,
 			),
 		).toHaveLength(requestedCompactions);
-		expect(faux.state.callCount).toBe(requestedCompactions * 2 + 1);
+		expect(faux.state.callCount).toBe(requestedCompactions * (mixedBatch ? 1 : 2) + 1);
 		expect(session.getLastAssistantText()).toBe(finalReply);
 		expect(settledCount).toBe(requestedCompactions + 1);
 		expect(session.isStreaming).toBe(false);
@@ -168,6 +244,18 @@ async function runCompactionScenario(requestedCompactions: 1 | 2): Promise<void>
 describe("Online Context Compact with a real AgentSession", () => {
 	it("settles the automatic continuation before the original prompt returns", async () => {
 		await runCompactionScenario(1);
+	}, 10_000);
+
+	it("compacts before another provider request when plan calls share a tool batch", async () => {
+		await runCompactionScenario(1, { mixedBatch: true });
+	}, 10_000);
+
+	it("leaves an externally cancelled boundary without compaction or continuation", async () => {
+		await runCompactionScenario(1, { cancelAtBoundary: true });
+	}, 10_000);
+
+	it("reports a native compaction failure without scheduling a continuation", async () => {
+		await runCompactionScenario(1, { failCompaction: true });
 	}, 10_000);
 
 	it("settles two consecutive automatic compactions before the original prompt returns", async () => {
