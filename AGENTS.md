@@ -10,3 +10,5 @@ For any request that installs, builds, configures, or validates SoL-Pi:
 For ordinary repository changes, preserve the same compatibility and secret-handling constraints.
 
 Online Context Compact plan validation and progress detection belong to `src/sol-pi/extensions/online-context-compact/plan.ts`. Only observed completion transitions for the same step id and goal are boundaries; imported completed steps establish a baseline.
+
+Research findings and script contracts are indexed in `docs/research/2026-09-29-efficiency-review.md`. `scripts/analyze-session-efficiency.mjs` audits local sessions without exporting their content; `scripts/probe-compaction-policy.mjs` runs synthetic, offline diagnostics. Neither is part of the runtime package.
