@@ -80,40 +80,47 @@ function failureLines(body: string): Set<string> {
 	return new Set(body.split(/\r?\n/u).map((line) => line.trim()).filter((line) => FAILURE_SIGNAL.test(line)));
 }
 
+/** Containment checks spent on the lower bound before leaving the answer to the reducer. */
+const MAX_PINNED_LINE_CHECKS = 64;
+
 /**
- * Whether the quote budget can cover every failure line, checked before paying
- * for a reducer call. Greedy left-to-right windows are optimal for distinct
- * lines; with repeated lines the answer is conservative and only skips
- * reduction, never accepts a receipt.
+ * False only when no receipt within the quote budget can cover every failure
+ * line, so a reducer call would be wasted; an unproven case still goes to the
+ * reducer and validateReceipt.
+ *
+ * A failure line longer than a quote can never be quoted. A failure line not
+ * contained in another failure line can only be quoted where it stands as a
+ * whole line, because any line containing it also matches FAILURE_SIGNAL. Each
+ * such line that occurs once pins a span; greedy windows give the fewest quotes
+ * for the pinned spans, which is a lower bound for the whole log.
  */
 export function failureCoverageFits(body: string): boolean {
-	const uncovered = failureLines(body);
-	const spans: { readonly start: number; readonly end: number }[] = [];
+	const lines = [...failureLines(body)];
+	if (lines.some((line) => line.length > MAX_QUOTE_CHARS)) return false;
+	const spans: { readonly text: string; readonly start: number }[] = [];
+	const occurrences = new Map<string, number>();
 	let offset = 0;
 	for (const raw of body.split("\n")) {
 		const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
 		const text = line.trim();
 		if (FAILURE_SIGNAL.test(text)) {
-			const start = offset + line.indexOf(text);
-			spans.push({ start, end: start + text.length });
+			spans.push({ text, start: offset + line.indexOf(text) });
+			occurrences.set(text, (occurrences.get(text) ?? 0) + 1);
 		}
 		offset += raw.length + 1;
 	}
+	let checks = 0;
 	let quotes = 0;
-	for (const [index, first] of spans.entries()) {
-		if (uncovered.size === 0) break;
-		if (!uncovered.has(body.slice(first.start, first.end))) continue;
+	let windowLimit = -1;
+	for (const span of spans) {
+		if (span.start + span.text.length <= windowLimit || occurrences.get(span.text) !== 1) continue;
+		if (++checks > MAX_PINNED_LINE_CHECKS) return true;
+		if (lines.some((other) => other.length > span.text.length && other.includes(span.text))) continue;
 		quotes++;
-		if (quotes > MAX_EVIDENCE_ITEMS || first.end - first.start > MAX_QUOTE_CHARS) return false;
-		let end = first.end;
-		for (const next of spans.slice(index + 1)) {
-			if (next.end - first.start > MAX_QUOTE_CHARS) break;
-			end = next.end;
-		}
-		const window = body.slice(first.start, end);
-		for (const line of uncovered) if (window.includes(line)) uncovered.delete(line);
+		if (quotes > MAX_EVIDENCE_ITEMS) return false;
+		windowLimit = span.start + MAX_QUOTE_CHARS;
 	}
-	return uncovered.size === 0;
+	return true;
 }
 
 /**
