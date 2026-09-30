@@ -16,3 +16,5 @@ OCC's Pi cut-point and projection adapter lives in `online-context-compact/exten
 Research findings and script contracts are indexed in `docs/research/2026-09-29-efficiency-review.md`. `scripts/analyze-session-efficiency.mjs` audits local sessions without exporting their content; `scripts/probe-compaction-policy.mjs` runs synthetic, offline diagnostics. Neither is part of the runtime package.
 
 ObservationPack derives full exposure from successful assistant responses in the active lineage, including ancestors hidden by compaction. Its archive is session-scoped; exposure has no independent mutable counter. Retry failures and aborts do not consume exposure.
+
+EPR receipt coverage belongs to `evidence-preserving-reducer/receipt.ts`. Every distinct line matching the shared `FAILURE_SIGNAL` must survive in an exact quote; missing coverage or uncertain/unrecognized failures return the original output. Keep prompt instructions and validation together.

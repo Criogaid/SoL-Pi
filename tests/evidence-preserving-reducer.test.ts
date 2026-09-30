@@ -203,6 +203,20 @@ function load(
 }
 
 describe("evidence-preserving reducer", () => {
+	it("returns the unchanged tool output when a receipt omits an independent failure", async () => {
+		const root = await storeRoot();
+		const body = `ERROR alpha target\n${"diagnostic output\n".repeat(400)}ERROR beta target\n`;
+		const { context, manager, pi } = load(root, modelComplete(body, (input) => ({
+			schema: REDUCER_RECEIPT_SCHEMA, source_sha256: sourceHash(input), status: "failure", uncertain: false,
+			evidence: [{ kind: "failure", quote: "ERROR alpha target" }],
+		})));
+		const event = bashEvent(body);
+		const original = structuredClone(event);
+		expect(await pi.emit("tool_result", event, context)).toBeUndefined();
+		expect(event).toEqual(original);
+		expect(manager.customEntryData()).toContainEqual(expect.objectContaining({ kind: "fallback", reason: "incomplete-failure-evidence" }));
+	});
+
 	it("registers without an extension-specific credential", () => {
 		const pi = new FakePi();
 		expect(() => createEvidencePreservingReducerExtension()(pi.asExtensionApi())).not.toThrow();

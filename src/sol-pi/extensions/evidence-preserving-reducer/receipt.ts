@@ -2,6 +2,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  */
+/** Owns receipt validation: exact quotes must cover every recognized failure line. */
 import type { ArchiveObject } from "./archive.ts";
 import {
 	FAILURE_SIGNAL,
@@ -44,9 +45,10 @@ export function reducerInstructions(): string {
 		"evidence must contain only exact, contiguous quotes copied byte-for-byte from the supplied log.",
 		"Allowed evidence kinds: fatal, failure, warning, target, summary.",
 		`Return at most ${MAX_EVIDENCE_ITEMS} evidence items and keep each quote at most ${MAX_QUOTE_CHARS} characters.`,
-		"Prefer the first causal-looking fatal/failure signal, unique fatal signatures, failing targets, and useful warnings.",
+		"Cover every distinct line containing an error, failure, fatal, exception, panic, timeout, unsolved goal, type mismatch, or assertion signal. Quote the entire line, including its target and location.",
+		"Keep repeated identical signals once. Include failing targets and useful warnings.",
 		"Do not diagnose a fix, recommend an edit, invent a command, or claim that an omitted failure is absent.",
-		"Set uncertain=true when the log is ambiguous or lacks a clear failure signal.",
+		"Set uncertain=true when the log is ambiguous, lacks a clear failure signal, or the quote budget cannot cover every failure signal.",
 		'Required shape: {"schema":string,"source_sha256":string,"status":"success"|"failure","uncertain":boolean,"evidence":[{"kind":"fatal"|"failure"|"warning"|"target"|"summary","quote":string}]}',
 	].join("\n");
 }
@@ -141,6 +143,15 @@ export function validateReceipt(
 		)
 	) {
 		return { ok: false, reason: "missing-failure-evidence" };
+	}
+	const failureLines = new Set(body.split(/\r?\n/u).map((line) => line.trim()).filter((line) => FAILURE_SIGNAL.test(line)));
+	if (isError && (parsed.uncertain || failureLines.size === 0)) {
+		return { ok: false, reason: "uncertain-failure-evidence" };
+	}
+	for (const line of failureLines) {
+		if (!evidence.some((item) => item.quote.includes(line))) {
+			return { ok: false, reason: "incomplete-failure-evidence" };
+		}
 	}
 	return { ok: true, value: { status: expectedStatus, uncertain: parsed.uncertain, evidence } };
 }
