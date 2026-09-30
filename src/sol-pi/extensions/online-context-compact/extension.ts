@@ -65,6 +65,8 @@ export const POST_COMPACTION_PLAN_REMINDER =
 export type OnlineContextCompactOptions = {
 	readonly cacheWriteReadRatio?: number | null;
 	readonly keepRecentTokens?: number;
+	/** Receives boundary and compaction outcomes for an opt-in diagnostic ledger. */
+	readonly recordDiagnostic?: (context: ExtensionContext, entry: Readonly<Record<string, unknown>>) => void;
 };
 
 type PendingBoundary = { readonly toolCallId: string };
@@ -292,6 +294,8 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			const boundary = pendingBoundary;
 			pendingBoundary = undefined;
 			if (!boundary || selected) return;
+			const report = (entry: Readonly<Record<string, unknown>>): void =>
+				options.recordDiagnostic?.(context, { event: "occ_boundary", ...entry });
 			const toolResult = event.toolResults.find((item) => item.toolCallId === boundary.toolCallId);
 			if (
 				event.message.role !== "assistant" ||
@@ -301,12 +305,16 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				!toolResult ||
 				toolResult.isError
 			) {
+				report({ outcome: "turn_failed" });
 				return;
 			}
 
 			const usage = context.getContextUsage();
 			const estimate = estimateNativeCompaction(context, observedMessages, keepRecentTokens);
-			if (!estimate) return;
+			if (!estimate) {
+				report({ outcome: "estimate_unavailable" });
+				return;
+			}
 			const contextWindowTokens = validPositiveInteger(usage?.contextWindow)
 				? usage.contextWindow
 				: validPositiveInteger(context.model?.contextWindow)
@@ -328,6 +336,22 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				cacheDebtRepaymentTokens: state.cacheDebtRepaymentTokens,
 				cacheWriteReadRatio,
 				economics: DEFAULT_COMPACTION_ECONOMICS,
+			});
+			report({
+				outcome: decision.compact ? "compact" : "defer",
+				reason: decision.reason,
+				planSteps: state.plan.length,
+				completedIntervals: state.completedBoundaryRequestCounts.length,
+				expectedRemainingRequests: decision.expectedRemainingRequests,
+				breakevenRequests: decision.breakevenRequests,
+				combinedBreakevenRequests: decision.combinedBreakevenRequests,
+				writeTokens: decision.writeTokens,
+				archiveTokens: decision.archiveTokens,
+				memoTokens: decision.memoTokens,
+				summaryCostTokens: decision.summaryCostTokens,
+				contextTokens: decision.contextTokens,
+				contextWindowTokens,
+				carriedDebtTokens: decision.carriedDebtTokens,
 			});
 			if (!decision.compact) return;
 
@@ -447,12 +471,20 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			const summaryDebt = summaryCost !== undefined && summaryCost > 0 && cacheReadPrice && cacheReadPrice > 0
 				? summaryCost * TOKENS_PER_MILLION / cacheReadPrice
 				: event.fromExtension ? 0 : decision?.summaryCostTokens ?? 0;
-			state = recordCompaction(state, {
-				debtTokens: decision ? Math.max(0, decision.writeTokens - decision.archiveTokens + summaryTokens)
-					* (decision.incrementalCacheCostRatio ?? 0) + summaryDebt : 0,
-				repaymentTokens: savedTokens,
-			});
+			const debtTokens = decision ? Math.max(0, decision.writeTokens - decision.archiveTokens + summaryTokens)
+				* (decision.incrementalCacheCostRatio ?? 0) + summaryDebt : 0;
+			state = recordCompaction(state, { debtTokens, repaymentTokens: savedTokens });
 			save();
+			options.recordDiagnostic?.(context, {
+				event: "occ_compaction",
+				boundary: decision !== undefined,
+				trigger: event.reason,
+				fromExtension: event.fromExtension,
+				summaryTokens,
+				debtTokens,
+				repaymentTokens: savedTokens,
+				summaryCostReported: summaryCost ?? null,
+			});
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;

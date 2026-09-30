@@ -22,6 +22,7 @@ export interface SolPiConfig {
 	readonly evidencePreservingReducerProvider: string;
 	readonly onlineContextCompact: boolean;
 	readonly cacheWriteReadRatio: number;
+	readonly requestLedger: boolean;
 }
 
 export const DEFAULT_CONFIG: SolPiConfig = Object.freeze({
@@ -33,6 +34,7 @@ export const DEFAULT_CONFIG: SolPiConfig = Object.freeze({
 	evidencePreservingReducerProvider: DEFAULT_REDUCER_PROVIDER,
 	onlineContextCompact: false,
 	cacheWriteReadRatio: DEFAULT_CACHE_WRITE_READ_RATIO,
+	requestLedger: false,
 });
 
 const FEATURE_KEYS = [
@@ -41,8 +43,16 @@ const FEATURE_KEYS = [
 	"evidencePreservingReducer",
 	"onlineContextCompact",
 ] as const;
+/** Diagnostic switches; not mechanisms, so the all-enabled profile does not require them. */
+const DIAGNOSTIC_KEYS = ["requestLedger"] as const;
 const STRING_KEYS = ["evidencePreservingReducerModel", "evidencePreservingReducerProvider"] as const;
-const CONFIG_KEYS = new Set<string>(["version", ...FEATURE_KEYS, ...STRING_KEYS, "cacheWriteReadRatio"]);
+const CONFIG_KEYS = new Set<string>([
+	"version",
+	...FEATURE_KEYS,
+	...DIAGNOSTIC_KEYS,
+	...STRING_KEYS,
+	"cacheWriteReadRatio",
+]);
 
 export function findConfigPath(
 	cwd = process.cwd(),
@@ -84,7 +94,7 @@ export function loadSolPiConfig(
 	}
 	if (record.version !== 1) throw new Error(`SoL-Pi config version must be 1: ${path}`);
 
-	for (const key of FEATURE_KEYS) {
+	for (const key of [...FEATURE_KEYS, ...DIAGNOSTIC_KEYS]) {
 		if (record[key] !== undefined && typeof record[key] !== "boolean") {
 			throw new Error(`SoL-Pi config ${key} must be boolean: ${path}`);
 		}

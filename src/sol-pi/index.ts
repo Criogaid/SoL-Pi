@@ -9,8 +9,10 @@ import { registerActionFusion } from "./extensions/action-fusion/index.ts";
 import { registerEvidencePreservingReducer } from "./extensions/evidence-preserving-reducer/index.ts";
 import { registerObservationPack } from "./extensions/observation-pack/index.ts";
 import { registerOnlineContextCompact } from "./extensions/online-context-compact/index.ts";
+import { registerRequestLedger } from "./request-ledger.ts";
 
 export function registerConfiguredFeatures(pi: ExtensionAPI, config: SolPiConfig): void {
+	const recordDiagnostic = config.requestLedger ? registerRequestLedger(pi) : undefined;
 	if (config.actionFusion) registerActionFusion(pi);
 	if (config.observationPack) registerObservationPack(pi);
 	if (config.evidencePreservingReducer) {
@@ -19,7 +21,9 @@ export function registerConfiguredFeatures(pi: ExtensionAPI, config: SolPiConfig
 			reducerProvider: config.evidencePreservingReducerProvider,
 		});
 	}
-	if (config.onlineContextCompact) registerOnlineContextCompact(pi, config.cacheWriteReadRatio);
+	if (config.onlineContextCompact) {
+		registerOnlineContextCompact(pi, config.cacheWriteReadRatio, recordDiagnostic);
+	}
 }
 
 export type SolPiConfigLoader = (ctx: ExtensionContext) => SolPiConfig;

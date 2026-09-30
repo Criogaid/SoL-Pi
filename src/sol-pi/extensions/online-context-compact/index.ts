@@ -4,7 +4,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CACHE_WRITE_READ_RATIO } from "../../config.ts";
-import { createOnlineContextCompactExtension } from "./extension.ts";
+import { createOnlineContextCompactExtension, type OnlineContextCompactOptions } from "./extension.ts";
 
 export {
 	DEFAULT_COMPACTION_ECONOMICS,
@@ -42,8 +42,9 @@ export type { PlanProgress, PlanUpdateInput } from "./tools.ts";
 export function registerOnlineContextCompact(
 	pi: ExtensionAPI,
 	cacheWriteReadRatio = DEFAULT_CACHE_WRITE_READ_RATIO,
+	recordDiagnostic?: OnlineContextCompactOptions["recordDiagnostic"],
 ): void {
-	createOnlineContextCompactExtension({ cacheWriteReadRatio })(pi);
+	createOnlineContextCompactExtension({ cacheWriteReadRatio, recordDiagnostic })(pi);
 }
 
 export default registerOnlineContextCompact;

@@ -49,6 +49,7 @@ This preflight does not make every valid SoL-Pi configuration all-enabled. Witho
 - `evidencePreservingReducerModel`: model id used for Evidence-Preserving Reducer.
 - `onlineContextCompact`: registers `update_plan` and boundary-driven native compaction after the other SoL-Pi context transformers.
 - `cacheWriteReadRatio`: supplies the single economic decision ratio used by Online Context Compact.
+- `requestLedger`: diagnostic switch, default `false`. It is not a mechanism, so `--require-all-enabled` does not require it. See [request ledger](#request-ledger).
 
 ## Evidence-Preserving Reducer runtime inputs
 
@@ -69,6 +70,14 @@ The estimate uses Pi's public cut-point and message-conversion functions. Remova
 The configured ratio stays fixed for the loaded extension. The mechanism stores its current plan, progress summaries, request horizon, context growth, and compaction debt as versioned custom entries in Pi's session log. After a successful compaction it sends one hidden, generic message with `triggerTurn: true`, which starts a new turn and instructs the assistant to rebuild its plan. A settlement barrier keeps print and JSON modes in the same Pi invocation until that continuation settles, so callers do not need to resume the session or inject `Continue working`. Cancelling or exiting does not schedule an automatic continuation. The mechanism creates no separate Online Context Compact files. The programmatic factory exposes only a matching retained-tail value for installations whose Pi compaction setting differs from the default.
 
 A boundary requires a previously observed `pending` or `in_progress` step to become `completed` with the same id and goal. When no previous plan exists, as in a fresh session or after correction or compaction, the first plan establishes a baseline; completed steps first seen there do not imply new progress. Resuming an existing session still compares against its restored plan. Replaying or renaming completed steps does not create a boundary. Real completion transitions after that baseline remain eligible for compaction.
+
+## Request ledger
+
+With `requestLedger: true`, SoL-Pi appends one JSONL line per provider request to `request-ledger.jsonl` in the session-derived `sol-pi/<session-id>/` directory. Each line records the provider, model, and API; the payload's total bytes; per-category item counts and UTF-8 bytes; how many leading prompt units and bytes match the previous request; and 12-character hashes of the tool definitions and system text. Categories are tool definitions, system text, user text, assistant text, reasoning, images, tool calls by tool name, and tool results by tool name and size (`lt4k`, `4to10k`, `gt10k`, ObservationPack `placeholder`, EPR `receipt`). OpenAI Responses, Chat Completions, and Anthropic Messages payloads are classified; other payload shapes are recorded per top-level field.
+
+Each assistant response adds a line with its stop reason and reported usage. When Online Context Compact is enabled, each completed-plan boundary adds its outcome (`turn_failed`, `estimate_unavailable`, `defer`, or `compact`) with the decision reason and estimates, and each compaction adds its trigger, summary size, and recorded debt.
+
+The ledger stores no prompt text, tool arguments, tool output, file paths, or credentials. Sizes are payload bytes, not provider tokens; pair request and response lines by `run` and `request` to calibrate them. The ledger sees the payload after SoL-Pi's context transformers but may precede changes made by extensions registered later. Sessions without a persistent directory are not recorded, and a write failure never blocks a request.
 
 ## Pi integration
 

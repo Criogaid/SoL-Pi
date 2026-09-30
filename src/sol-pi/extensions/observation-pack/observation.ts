@@ -15,6 +15,8 @@ export const THRESHOLD_BYTES = 10 * 1024;
 export const FULL_SENDS = 2;
 /** Placeholder excerpt budget, split evenly between head and tail, whole lines only. */
 export const PLACEHOLDER_EXCERPT_BYTES = 1024;
+/** Leading text of every placeholder, so other readers can recognize a replaced result. */
+export const PLACEHOLDER_PREFIX = "[large tool result replaced";
 
 const CHARS_PER_TOKEN = 4;
 const OBSERVATION_ID_PATTERN = /^obs_[a-f0-9]{24}$/u;
@@ -264,7 +266,7 @@ export function placeholderFor(observation: Observation): string {
 	const head = placeholderExcerpt(observation.text, headBudget, false);
 	const tail = placeholderExcerpt(observation.text, tailBudget, true);
 	return [
-		`[large tool result replaced after ${FULL_SENDS} successful responses on this branch]`,
+		`${PLACEHOLDER_PREFIX} after ${FULL_SENDS} successful responses on this branch]`,
 		`id: ${observation.id}`,
 		`tool: ${observation.toolName}`,
 		`original_bytes: ${observation.bytes}`,
