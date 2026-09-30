@@ -104,6 +104,16 @@ describe("Online Context Compact state snapshots", () => {
 		});
 	});
 
+	it("retains prior debt and repayment across another compaction", () => {
+		const prior = { ...initialOnlineState(), cacheDebtTokens: 1_000, cacheDebtRepaymentTokens: 100 };
+		expect(recordCompaction(prior, { debtTokens: 600, repaymentTokens: 200 })).toMatchObject({
+			cacheDebtTokens: 1_600, cacheDebtRepaymentTokens: 300,
+		});
+		expect(recordCompaction(prior, { debtTokens: 0, repaymentTokens: 0 })).toMatchObject({
+			cacheDebtTokens: 1_000, cacheDebtRepaymentTokens: 100,
+		});
+	});
+
 	it("drops stale plan history when the user corrects an active run", () => {
 		const before = recordBoundary(recordProviderRequest(initialOnlineState(), 5_000), PLAN, PROGRESS);
 		expect(recordCorrection(before)).toMatchObject({

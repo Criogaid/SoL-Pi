@@ -57,10 +57,13 @@ The release entry supplies the run label and session-derived storage. It uses on
 
 ## Online Context Compact runtime inputs
 
-The release entry uses two runtime inputs:
+The release entry uses the following runtime inputs:
 
 - **Context window** — from `ExtensionContext.getContextUsage()`, used for window-pressure protection.
-- **Cache write/read ratio** — from `cacheWriteReadRatio` in the effective `sol-pi.json`. The value remains fixed for the session and is not recomputed when the model changes. It drives one runtime decision and is not a cost report.
+- **Cache write/read ratio** — from `cacheWriteReadRatio` in the effective `sol-pi.json`, fixed for the loaded extension.
+- **Summary prices** — from Pi's active model metadata (`cost.input`, `cost.output`, `cost.cacheRead`). Without a positive cache-read price, economic compaction defers; window protection remains available.
+
+The estimate uses Pi's public cut-point and message-conversion functions. Removable history is measured using the most recent tool-result projection, so an already masked observation is charged at its visible size. Summary input is separately serialized from raw retained session history through Pi's serializer. `DEFAULT_NATIVE_SUMMARY_TOKEN_ESTIMATE` budgets each native summary call and `SUMMARY_PROMPT_TOKEN_ESTIMATE` allows for its prompt. Split turns can require two summary calls. Cache rebuilding uses the predicted retained context plus the memo; previous unpaid debt and repayment accumulate. Successful boundary compactions reconcile memo size and use reported positive summary cost when available. These estimates omit provider-specific tool-schema overhead, uncertain future masking, and unreported retry charges; they are policy inputs, not a billing ledger.
 
 The configured ratio stays fixed for the loaded extension. The mechanism stores its current plan, progress summaries, request horizon, context growth, and compaction debt as versioned custom entries in Pi's session log. After a successful compaction it sends one hidden, generic message with `triggerTurn: true`, which starts a new turn and instructs the assistant to rebuild its plan. A settlement barrier keeps print and JSON modes in the same Pi invocation until that continuation settles, so callers do not need to resume the session or inject `Continue working`. Cancelling or exiting does not schedule an automatic continuation. The mechanism creates no separate Online Context Compact files. The programmatic factory exposes only a matching retained-tail value for installations whose Pi compaction setting differs from the default.
 

@@ -125,6 +125,8 @@ Online Context Compact stores its state in Pi's session log. After a successful 
 
 Compaction boundaries require an observed plan step to move from `pending` or `in_progress` to `completed` with the same id and goal. Importing completed steps, including when rebuilding a plan after compaction, records the plan without creating a new boundary.
 
+OCC estimates savings at Pi's actual retained-history boundary using the latest visible tool results. Its policy includes retained-context cache rebuilding, summary cost, and outstanding debt from earlier compactions. See [runtime inputs and estimation limits](docs/configuration.md#online-context-compact-runtime-inputs).
+
 Evidence-Preserving Reducer may send eligible diagnostic-log content to its configured reducer model using Pi-managed authentication. Review [SECURITY.md](SECURITY.md) before enabling it. Do not enable remote reduction for logs that must remain local.
 
 ## Documentation

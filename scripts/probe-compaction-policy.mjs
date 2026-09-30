@@ -47,6 +47,7 @@ function cutFixture(oldChars, latestChars) {
 
 const decision = decideCompaction({
 	writeTokens: 100_000, archiveTokens: 80_000, memoTokens: MEMO_TOKENS, contextTokens: 100_000,
+	summaryCostTokens: 0, // This isolated formula fixture excludes summary cost; runtime policy includes it.
 	completedBoundaryRequestCounts: [5], remainingBoundaries: 1, averageContextTokenIncrement: null,
 	contextWindowTokens: 400_000, priorCompactionCount: 0, carriedDebtTokens: 0, cacheDebtRepaymentTokens: 0,
 	cacheWriteReadRatio: CACHE_RATIO, economics: DEFAULT_COMPACTION_ECONOMICS,

@@ -14,6 +14,7 @@ function decision(overrides: Partial<Parameters<typeof decideCompaction>[0]> = {
 		writeTokens: 80_000,
 		archiveTokens: 60_000,
 		memoTokens: 1_000,
+		summaryCostTokens: 0,
 		contextTokens: 80_000,
 		completedBoundaryRequestCounts: [4, 6, 5],
 		remainingBoundaries: 4,
@@ -29,6 +30,21 @@ function decision(overrides: Partial<Parameters<typeof decideCompaction>[0]> = {
 }
 
 describe("Online Context Compact economics", () => {
+	it("charges the retained context and summary call in cache-read token equivalents", () => {
+		const result = decision({ writeTokens: 100_000, archiveTokens: 80_000, summaryCostTokens: 40_000, cacheWriteReadRatio: 12.5 });
+		expect(result.breakevenRequests).toBeCloseTo((21_000 * 11.5 + 40_000) / 79_000);
+	});
+
+	it("repays outstanding debt with cumulative savings across compactions", () => {
+		const result = decision({ priorCompactionCount: 1, carriedDebtTokens: 100_000, cacheDebtRepaymentTokens: 20_000, summaryCostTokens: 1_000 });
+		expect(result.combinedBreakevenRequests).toBeCloseTo(101_000 / 79_000);
+	});
+
+	it("defers unpriced summaries except under window pressure", () => {
+		expect(decision({ summaryCostTokens: null })).toMatchObject({ compact: false, reason: "summary_cost_unavailable" });
+		expect(decision({ summaryCostTokens: null, contextTokens: 195_000 })).toMatchObject({ compact: true, reason: "window_protection" });
+	});
+
 	it("estimates the remaining request horizon from completed boundaries", () => {
 		expect(
 			estimateRemainingRequests({

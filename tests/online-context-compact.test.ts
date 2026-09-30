@@ -135,6 +135,31 @@ describe("Online Context Compact extension", () => {
 		expect(abort).not.toHaveBeenCalled();
 	});
 
+	for (const shape of ["oversized retained turn", "masked archive"] as const) {
+		it(`does not spend a summary on a ${shape} with no projected saving`, async () => {
+			const manager = new FakeSessionManager();
+			manager.appendMessage({ role: "user", content: "old task", timestamp: 0 });
+			const raw: AgentMessage = shape === "masked archive"
+				? { role: "toolResult", toolCallId: "large-result", toolName: "read", content: [{ type: "text", text: "x".repeat(80_000) }], isError: false, timestamp: 0 }
+				: assistant("x".repeat(1_000));
+			manager.appendMessage(raw);
+			manager.appendMessage({ role: "user", content: "y".repeat(160_000), timestamp: 1 });
+			manager.appendMessage(assistant("tail"));
+			const pi = new FakePi(manager);
+			createOnlineContextCompactExtension({ cacheWriteReadRatio: 0 })(pi.asExtensionApi());
+			const abort = vi.fn();
+			const context = fakeContext(manager, { abort, getContextUsage: () => ({ tokens: 195_000, contextWindow: 200_000, percent: 97.5 }) });
+			await pi.emit("session_start", { type: "session_start" }, context);
+			const projected = manager.entries.flatMap((entry) => entry.type === "message" ? [entry.message] : [])
+				.map((message) => message.role === "toolResult" ? { ...message, content: [{ type: "text" as const, text: "observation handle" }] } : message);
+			await pi.emitContext(projected, context);
+			await runPlan(pi, context, "plan-open", { steps: OPEN });
+			await runPlan(pi, context, "plan-done", { steps: DONE, progress: PROGRESS });
+			await pi.emit("turn_end", { message: assistant("boundary"), toolResults: [{ toolCallId: "plan-done", isError: false }] }, context);
+			expect(abort).not.toHaveBeenCalled();
+		});
+	}
+
 	for (const rejectedBoundary of ["cancelled run", "failed plan result"] as const) {
 		it(`does not compact after a ${rejectedBoundary}`, async () => {
 			const manager = new FakeSessionManager();
@@ -183,7 +208,7 @@ describe("Online Context Compact extension", () => {
 	for (const continuationStart of ["eager", "deferred"] as const) {
 		it(`stops at an eligible completed-step boundary, then compacts with a ${continuationStart} continuation`, async () => {
 		const manager = new FakeSessionManager();
-		manager.appendMessage({ role: "user", content: `old ${"x".repeat(2_000)}`, timestamp: Date.now() });
+		manager.appendMessage({ role: "user", content: `old ${"x".repeat(12_000)}`, timestamp: Date.now() });
 		manager.appendMessage(assistant(`work ${"y".repeat(2_000)}`));
 		const pi = new FakePi(manager);
 		createOnlineContextCompactExtension({ cacheWriteReadRatio: 12.5, keepRecentTokens: 1 })(pi.asExtensionApi());

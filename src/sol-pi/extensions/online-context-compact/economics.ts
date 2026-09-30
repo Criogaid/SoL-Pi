@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+/** Pure compaction policy. Costs are estimates in cache-read token equivalents. */
 export type CompactionEconomics = {
 	readonly remainingRequestScale: number;
 	readonly remainingRequestStddevK: number;
@@ -27,7 +28,7 @@ export type CompactionReason =
 	| "deferred_carried_debt"
 	| "horizon_unavailable"
 	| "cache_ratio_unavailable"
-	| "native_not_compactable"
+	| "summary_cost_unavailable"
 	| "non_positive_saving";
 
 export type RequestHorizonEstimate = {
@@ -44,6 +45,7 @@ export type CompactionDecision = {
 	readonly writeTokens: number;
 	readonly archiveTokens: number;
 	readonly memoTokens: number;
+	readonly summaryCostTokens: number | null;
 	readonly contextTokens: number;
 	readonly completedBoundaryRequestCounts: readonly number[] | null;
 	readonly requestsPerBoundaryMean: number | null;
@@ -123,6 +125,7 @@ export function decideCompaction(input: {
 	readonly writeTokens: number;
 	readonly archiveTokens: number;
 	readonly memoTokens: number;
+	readonly summaryCostTokens: number | null;
 	readonly contextTokens: number;
 	readonly completedBoundaryRequestCounts: readonly number[] | null;
 	readonly remainingBoundaries: number;
@@ -149,14 +152,14 @@ export function decideCompaction(input: {
 	const savingTokens = input.archiveTokens - input.memoTokens;
 	const incrementalCacheCostRatio =
 		input.cacheWriteReadRatio === null ? null : Math.max(0, input.cacheWriteReadRatio - 1);
-	const breakevenRequests =
-		savingTokens > 0 && incrementalCacheCostRatio !== null
-			? (input.writeTokens * incrementalCacheCostRatio) / savingTokens
-			: null;
-	const combinedBreakevenRequests =
-		savingTokens > 0 && incrementalCacheCostRatio !== null
-			? (input.carriedDebtTokens + input.writeTokens * incrementalCacheCostRatio) / savingTokens
-			: null;
+	const retainedTokens = Math.max(0, input.writeTokens - input.archiveTokens) + input.memoTokens;
+	const newDebtTokens = incrementalCacheCostRatio === null || input.summaryCostTokens === null
+		? null
+		: retainedTokens * incrementalCacheCostRatio + input.summaryCostTokens;
+	const breakevenRequests = savingTokens > 0 && newDebtTokens !== null ? newDebtTokens / savingTokens : null;
+	const combinedBreakevenRequests = savingTokens > 0 && newDebtTokens !== null
+		? (input.carriedDebtTokens + newDebtTokens) / (input.cacheDebtRepaymentTokens + savingTokens)
+		: null;
 	const firstCompaction = input.priorCompactionCount === 0;
 	const effectiveHorizonRequests =
 		horizon === null
@@ -199,6 +202,7 @@ export function decideCompaction(input: {
 		writeTokens: input.writeTokens,
 		archiveTokens: input.archiveTokens,
 		memoTokens: input.memoTokens,
+		summaryCostTokens: input.summaryCostTokens,
 		contextTokens: input.contextTokens,
 		...(horizon ?? {
 			completedBoundaryRequestCounts: null,
@@ -226,6 +230,8 @@ export function decideCompaction(input: {
 					? "economic"
 					: horizon === null
 						? "horizon_unavailable"
+						: input.summaryCostTokens === null
+							? "summary_cost_unavailable"
 						: breakevenRequests === null
 							? "cache_ratio_unavailable"
 							: !firstCompaction && baseEconomic && !subsequentMarginOpen

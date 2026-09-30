@@ -56,7 +56,7 @@ Pi reports the session as idle while an extension-requested manual compaction is
 
 Online Context Compact reads `ExtensionContext.getContextUsage()` for both the context window and the provider-counted context size. When Pi reports no size — as it does between a compaction and the next answered request — the boundary falls back to its own estimate.
 
-The standalone entry passes `cacheWriteReadRatio` from `sol-pi.json` directly into Online Context Compact's economic check. It does not inspect model price metadata. Changing models during a session does not change the ratio; users who want a different decision policy update the configuration and start a new session.
+The standalone entry passes `cacheWriteReadRatio` from `sol-pi.json` into Online Context Compact's cache-rebuild check. Pi model price metadata estimates summary cost in cache-read token equivalents. The configured ratio stays fixed; use a new session for a different model/pricing policy. Missing summary prices defer economic compaction while leaving window protection active. Hosts missing the public `findCutPoint`, `sessionEntryToContextMessages`, `convertToLlm`, or `serializeConversation` helpers skip optional boundary compaction and retain the host's native compaction policy.
 
 ## Interactive TUI
 

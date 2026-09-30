@@ -32,68 +32,22 @@ import {
 import { registerOnlineTools, type PlanUpdateInput } from "./tools.ts";
 
 /*
- * omp compat: the oh-my-pi (omp) harness re-exports a reduced
- * `@earendil-works/pi-coding-agent` surface that omits `findCutPoint` and
- * `sessionEntryToContextMessages`. Both are used only by the feasibility
- * pre-check below, so resolve them at runtime and fall back to local
- * equivalents when the host does not export them.
+ * The host owns cut-point semantics. Hosts without the public preparation
+ * helpers skip optional boundary compaction and retain their native policy.
  */
-type CutPointResult = {
-	readonly firstKeptEntryIndex: number;
-	readonly turnStartIndex: number;
-	readonly isSplitTurn: boolean;
-};
+const hostModule: Partial<Pick<typeof piCodingAgent, "findCutPoint" | "sessionEntryToContextMessages" | "convertToLlm" | "serializeConversation">> = piCodingAgent;
 
-// Unchecked casts: the host module namespace is structurally opaque here, and
-// the two optional members are exactly what this shim probes for.
-const hostModule = piCodingAgent as unknown as {
-	findCutPoint?: (
-		entries: readonly SessionEntry[],
-		startIndex: number,
-		endIndex: number,
-		keepRecentTokens: number,
-	) => CutPointResult;
-	sessionEntryToContextMessages?: (entry: SessionEntry) => readonly unknown[];
-};
+type NativeEstimate = Pick<CompactionDecision, "writeTokens" | "archiveTokens" | "memoTokens" | "summaryCostTokens">;
+const SUMMARY_PROMPT_TOKEN_ESTIMATE = 1_000;
+const TOKENS_PER_MILLION = 1_000_000;
 
-function entryMessage(entry: SessionEntry): AgentMessage | undefined {
-	if (!entry || typeof entry !== "object" || !("message" in entry)) return undefined;
-	// Unchecked cast: session entries that carry a message carry an agent message.
-	return entry.message as AgentMessage;
+function messageTokens(messages: readonly AgentMessage[]): number {
+	return messages.reduce((total, message) => total + estimateTokens(message), 0);
 }
 
-function entryContextMessageCount(entry: SessionEntry): number {
-	const hostFn = hostModule.sessionEntryToContextMessages;
-	if (hostFn) return hostFn(entry).length;
-	return entryMessage(entry) ? 1 : 0;
-}
-
-function findCutPoint(
-	entries: readonly SessionEntry[],
-	startIndex: number,
-	endIndex: number,
-	keepRecentTokens: number,
-): CutPointResult {
-	const hostFn = hostModule.findCutPoint;
-	if (hostFn) return hostFn(entries, startIndex, endIndex, keepRecentTokens);
-	// Token-walk the tail backwards; the first entry that no longer fits in the
-	// retained budget ends the compactable history. Turn splitting is a host-only
-	// refinement, so report a whole-entry cut.
-	let kept = 0;
-	let firstKeptEntryIndex = endIndex;
-	for (let index = endIndex - 1; index >= startIndex; index--) {
-		const entry = entries[index];
-		if (!entry) continue;
-		if (entryContextMessageCount(entry) === 0) {
-			firstKeptEntryIndex = index;
-			continue;
-		}
-		const message = entryMessage(entry);
-		if (message) kept += estimateTokens(message);
-		if (kept > keepRecentTokens) break;
-		firstKeptEntryIndex = index;
-	}
-	return { firstKeptEntryIndex, turnStartIndex: -1, isSplitTurn: false };
+function projectedMessages(messages: readonly AgentMessage[], observed: readonly AgentMessage[]): AgentMessage[] {
+	const results = new Map(observed.flatMap((message) => message.role === "toolResult" ? [[message.toolCallId, message] as const] : []));
+	return messages.map((message) => message.role === "toolResult" ? results.get(message.toolCallId) ?? message : message);
 }
 
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
@@ -111,7 +65,6 @@ export type OnlineContextCompactOptions = {
 
 type PendingBoundary = { readonly toolCallId: string };
 type SelectedCompaction = { readonly decision: CompactionDecision };
-type CacheDebt = { readonly debtTokens: number; readonly repaymentTokens: number };
 type PendingContinuation = { readonly promise: Promise<void>; readonly resolve: () => void };
 
 export function resolveKeepRecentTokens(value: number | undefined): number {
@@ -152,15 +105,6 @@ function progressSummary(input: PlanUpdateInput, completedStepId: string): Progr
 	};
 }
 
-function compactionMessageCount(entries: readonly SessionEntry[], startIndex: number, endIndex: number): number {
-	let count = 0;
-	for (let index = startIndex; index < endIndex; index++) {
-		const entry = entries[index];
-		if (entry && entry.type !== "compaction" && entryContextMessageCount(entry) > 0) count++;
-	}
-	return count;
-}
-
 function branchAfterAbort(entries: readonly SessionEntry[]): SessionEntry[] {
 	const last = entries.at(-1);
 	const markerProvider = ["sol", "pi"].join("-");
@@ -192,25 +136,43 @@ function branchAfterAbort(entries: readonly SessionEntry[]): SessionEntry[] {
 	];
 }
 
-function nativeCompactionFeasible(entries: readonly SessionEntry[], keepRecentTokens: number): boolean {
-	const path = branchAfterAbort(entries);
+function estimateNativeCompaction(context: ExtensionContext, observed: readonly AgentMessage[], keepRecentTokens: number): NativeEstimate | undefined {
+	const { findCutPoint, sessionEntryToContextMessages, convertToLlm, serializeConversation } = hostModule;
+	if (!findCutPoint || !sessionEntryToContextMessages || !convertToLlm || !serializeConversation) return;
+	const path = branchAfterAbort(context.sessionManager.getBranch());
 	let startIndex = 0;
+	let previousSummary = "";
 	for (let index = path.length - 1; index >= 0; index--) {
 		const entry = path[index];
 		if (entry?.type !== "compaction") continue;
 		const keptIndex = path.findIndex((item) => item.id === entry.firstKeptEntryId);
 		startIndex = keptIndex >= 0 ? keptIndex : index + 1;
+		previousSummary = entry.summary;
 		break;
 	}
-
 	const cut = findCutPoint(path, startIndex, path.length, keepRecentTokens);
+	const messages = (start: number, end: number): AgentMessage[] => path.slice(start, end)
+		.flatMap((entry) => entry.type === "compaction" ? [] : sessionEntryToContextMessages(entry));
 	const historyEnd = cut.isSplitTurn ? cut.turnStartIndex : cut.firstKeptEntryIndex;
-	const historyMessages = historyEnd > startIndex ? compactionMessageCount(path, startIndex, historyEnd) : 0;
-	const prefixMessages =
-		cut.isSplitTurn && cut.turnStartIndex >= 0
-			? compactionMessageCount(path, cut.turnStartIndex, cut.firstKeptEntryIndex)
-			: 0;
-	return historyMessages > 0 || prefixMessages > 0;
+	const history = messages(startIndex, historyEnd);
+	const prefix = cut.isSplitTurn ? messages(cut.turnStartIndex, cut.firstKeptEntryIndex) : [];
+	if (history.length === 0 && prefix.length === 0) return;
+	const summaryCalls = Number(history.length > 0) + Number(prefix.length > 0);
+	const memoTokens = DEFAULT_NATIVE_SUMMARY_TOKEN_ESTIMATE * summaryCalls;
+	const summaryInputTokens = tokenEstimate(serializeConversation(convertToLlm([...history, ...prefix])))
+		+ tokenEstimate(previousSummary) + SUMMARY_PROMPT_TOKEN_ESTIMATE * summaryCalls;
+	const cost = context.model?.cost;
+	const summaryCostTokens = cost && cost.cacheRead > 0 && cost.input >= 0 && cost.output >= 0
+		? (summaryInputTokens * cost.input + memoTokens * cost.output) / cost.cacheRead
+		: null;
+	const beforeTokens = messageTokens(projectedMessages(buildSessionContext(path).messages, observed));
+	const retainedTokens = messageTokens(projectedMessages(messages(cut.firstKeptEntryIndex, path.length), observed));
+	return {
+		writeTokens: beforeTokens + tokenEstimate(context.getSystemPrompt()),
+		archiveTokens: Math.max(0, beforeTokens - retainedTokens),
+		memoTokens,
+		summaryCostTokens,
+	};
 }
 
 function validPositiveInteger(value: unknown): value is number {
@@ -227,7 +189,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		let observedMessages: readonly AgentMessage[] = [];
 		let pendingBoundary: PendingBoundary | undefined;
 		let selected: SelectedCompaction | undefined;
-		let activeDebt: CacheDebt | undefined;
+		let activeDebt: SelectedCompaction | undefined;
 		let nextContinuation: PendingContinuation | undefined;
 		let compactionInFlight = false;
 
@@ -339,9 +301,8 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			}
 
 			const usage = context.getContextUsage();
-			const writeTokens = contextTokens(context);
-			const fixedTokens = tokenEstimate(context.getSystemPrompt());
-			const archiveTokens = Math.max(0, writeTokens - fixedTokens - keepRecentTokens);
+			const estimate = estimateNativeCompaction(context, observedMessages, keepRecentTokens);
+			if (!estimate) return;
 			const contextWindowTokens = validPositiveInteger(usage?.contextWindow)
 				? usage.contextWindow
 				: validPositiveInteger(context.model?.contextWindow)
@@ -351,11 +312,9 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				state.positiveContextDeltaCount === 0
 					? null
 					: state.positiveContextDeltaTotal / state.positiveContextDeltaCount;
-			const priced = decideCompaction({
-				writeTokens,
-				archiveTokens,
-				memoTokens: DEFAULT_NATIVE_SUMMARY_TOKEN_ESTIMATE,
-				contextTokens: writeTokens,
+			const decision = decideCompaction({
+				...estimate,
+				contextTokens: contextTokens(context),
 				completedBoundaryRequestCounts: state.completedBoundaryRequestCounts,
 				remainingBoundaries: state.plan.filter((step) => step.status !== "completed").length,
 				averageContextTokenIncrement,
@@ -366,10 +325,6 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				cacheWriteReadRatio,
 				economics: DEFAULT_COMPACTION_ECONOMICS,
 			});
-			const decision: CompactionDecision =
-				priced.compact && !nativeCompactionFeasible(context.sessionManager.getBranch(), keepRecentTokens)
-					? { ...priced, compact: false, reason: "native_not_compactable" }
-					: priced;
 			if (!decision.compact) return;
 
 			selected = { decision };
@@ -393,10 +348,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				return;
 			}
 
-			activeDebt = {
-				debtTokens: pending.decision.writeTokens * (pending.decision.incrementalCacheCostRatio ?? 0),
-				repaymentTokens: Math.max(0, pending.decision.archiveTokens - pending.decision.memoTokens),
-			};
+			activeDebt = { decision: pending.decision };
 			let compacted = false;
 			let compactionError: Error | undefined;
 			try {
@@ -483,10 +435,19 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 
 		pi.on("session_compact", (event, context) => {
 			ensureRestored(context);
-			state = recordCompaction(
-				state,
-				event.fromExtension || !activeDebt ? { debtTokens: 0, repaymentTokens: 0 } : activeDebt,
-			);
+			const decision = activeDebt?.decision;
+			const summaryTokens = tokenEstimate(event.compactionEntry.summary);
+			const savedTokens = decision ? Math.max(0, decision.archiveTokens - summaryTokens) : 0;
+			const summaryCost = event.compactionEntry.usage?.cost.total;
+			const cacheReadPrice = context.model?.cost.cacheRead;
+			const summaryDebt = summaryCost !== undefined && summaryCost > 0 && cacheReadPrice && cacheReadPrice > 0
+				? summaryCost * TOKENS_PER_MILLION / cacheReadPrice
+				: event.fromExtension ? 0 : decision?.summaryCostTokens ?? 0;
+			state = recordCompaction(state, {
+				debtTokens: decision ? Math.max(0, decision.writeTokens - decision.archiveTokens + summaryTokens)
+					* (decision.incrementalCacheCostRatio ?? 0) + summaryDebt : 0,
+				repaymentTokens: savedTokens,
+			});
 			save();
 			pendingBoundary = undefined;
 			selected = undefined;
