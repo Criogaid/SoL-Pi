@@ -1,0 +1,102 @@
+{
+  "schema": "sol-pi-live-verification-record/1",
+  "provider": "openai",
+  "model": "gpt-6-astra",
+  "mainReasoning": "medium",
+  "piVersion": "0.85.1",
+  "sourceCommit": "9af4045",
+  "runtimeDependencyChanges": false,
+  "runs": [
+    {
+      "attempt": 1,
+      "startedAt": "2026-09-30T02:30:04.801Z",
+      "finishedAt": "2026-09-30T02:30:32.985Z",
+      "status": "invalid-harness",
+      "reason": "Missing SDK bindExtensions call; plugins were not initialized. Excluded from plugin-validation evidence, retained in usage accounting.",
+      "usage": {
+        "main": { "calls": 6, "input": 8368, "output": 51, "cacheRead": 34816, "cacheWrite": 0, "totalTokens": 43235 }
+      },
+      "temporaryArtifactsRemoved": true
+    },
+    {
+      "attempt": 2,
+      "startedAt": "2026-09-30T02:31:28.110Z",
+      "finishedAt": "2026-09-30T02:33:01.335Z",
+      "status": "passed",
+      "scenarios": [
+        {
+          "name": "observation-branches",
+          "allMechanismsEnabled": true,
+          "providerRequests": 6,
+          "extensionErrors": 0,
+          "blockedTools": 0,
+          "checks": { "branchAThirdMasked": true, "branchBFirstFull": true, "branchAReturnMasked": true },
+          "usage": {
+            "main": { "calls": 6, "input": 9084, "output": 51, "cacheRead": 31104, "cacheWrite": 0, "totalTokens": 40239 }
+          }
+        },
+        {
+          "name": "repair-and-compaction",
+          "allMechanismsEnabled": true,
+          "providerRequests": 8,
+          "extensionErrors": 0,
+          "blockedTools": 0,
+          "compactions": 1,
+          "checks": { "arithmeticCorrect": true, "bothErrorsPreserved": true, "realSummary": true, "continuationFinished": true },
+          "reducerFallbacks": [],
+          "usage": {
+            "main": { "calls": 8, "input": 42479, "output": 514, "cacheRead": 170496, "cacheWrite": 0, "totalTokens": 213489 },
+            "summary": { "entries": 1, "input": 13017, "output": 160, "cacheRead": 3968, "cacheWrite": 0, "totalTokens": 17145 },
+            "reducer": { "calls": 2, "input": 4316, "output": 218, "cacheRead": 7936, "cacheWrite": 0, "totalTokens": 12470 }
+          }
+        }
+      ],
+      "temporaryArtifactsRemoved": true
+    },
+    {
+      "attempt": 3,
+      "startedAt": "2026-09-30T02:35:11.916Z",
+      "finishedAt": "2026-09-30T02:36:26.146Z",
+      "status": "passed",
+      "harnessSha256": "7ecc6c227069c64dfd16e80ec86caa101fa2c06e0021f45beca424582acd701a",
+      "scenario": "repair-and-compaction",
+      "purpose": "Verify actual completed-plan submissions and classify the boundary cancellation independently of successful task completion.",
+      "allMechanismsEnabled": true,
+      "providerRequests": 8,
+      "completedPlanSubmissions": 3,
+      "compactions": 1,
+      "extensionErrors": 0,
+      "blockedTools": 0,
+      "emptyCancelledResponses": 1,
+      "unexpectedAssistantFailures": 0,
+      "checks": { "arithmeticCorrect": true, "bothErrorsPreserved": true, "realSummary": true, "oneCompactionDespitePlanReplay": true, "continuationFinished": true },
+      "recordedDebtTokens": 212475,
+      "reportedSummaryCost": 0.027437999999999997,
+      "reducerFallbacks": [],
+      "usage": {
+        "main": { "calls": 8, "input": 42485, "output": 509, "cacheRead": 170496, "cacheWrite": 0, "totalTokens": 213490 },
+        "summary": { "entries": 1, "input": 217, "output": 170, "cacheRead": 16768, "cacheWrite": 0, "totalTokens": 17155 },
+        "reducer": { "calls": 2, "input": 2268, "output": 218, "cacheRead": 9984, "cacheWrite": 0, "totalTokens": 12470 }
+      },
+      "temporaryArtifactsRemoved": true
+    }
+  ],
+  "limitations": [
+    "Synthetic development fixtures; no quality non-inferiority or cost-savings claim.",
+    "Repair runs advertise a 32768-token window to trigger boundary window protection; this is not an economic-gate experiment.",
+    "Summary entries may aggregate multiple native summary requests; their usage is recorded once per compaction.",
+    "Main, summary and reducer usage are separate categories; reported cost metadata is not a complete invoice.",
+    "Attempt 3 repeated an already-seen fixture and benefited from provider caching; it is not an independent performance sample.",
+    "Only aggregate evidence is retained; raw synthetic sessions and archives were deleted."
+  ],
+  "checks": {
+    "typecheck": "passed",
+    "testFiles": 24,
+    "testsPassed": 239,
+    "testsSkipped": 3,
+    "packageDryRun": "passed",
+    "publicPiCompatibility": "passed",
+    "offlinePolicyProbe": "passed",
+    "dependencyAudit": { "status": "failed", "exitCode": 1, "moderate": 3, "high": 1, "highDependency": "Pi 0.85.1 transitive undici" }
+  }
+}

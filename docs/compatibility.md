@@ -84,3 +84,5 @@ When reusing or recalling an observation, ObservationPack rejects a symbolic lin
 Windows archive confidentiality depends on the session directory's inherited ACLs; SoL-Pi does not provision Windows ACLs.
 
 The real `AgentSession` regression suite also checks repeated post-compaction plan imports with unchanged and renamed step ids. Imported completed steps do not create new boundaries; subsequent observed completion transitions still compact and settle within the original prompt invocation.
+
+The [real-provider verification](research/2026-09-30-fixes-validation.md) additionally exercises Pi 0.85.1's public SDK with all four mechanisms enabled, actual tool execution, branch navigation, native summaries, and EPR calls to a configured model. It validates behavior on synthetic fixtures, not production savings or compatibility with newer Pi releases. The current pinned dependency audit reports a high-severity transitive `undici` finding; the managed installation gate remains unsatisfied.

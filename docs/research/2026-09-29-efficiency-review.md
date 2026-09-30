@@ -1,5 +1,7 @@
 # SoL-Pi efficiency and reliability review — 2026-09-29
 
+This document records the investigation at commit `472c2e7`. The OCC accounting, ObservationPack lineage, and EPR coverage findings have since been implemented; see [the implementation and real-provider verification report](2026-09-30-fixes-validation.md) for the current status. Historical measurements below describe the original baseline.
+
 ## Decision
 
 Prioritize correct progress boundaries, evidence retention, and complete cost accounting. The strongest immediate result is a reproduced Online Context Compact (OCC) feedback loop and its small, tested correction. A broader reduction in task cost without loss of capability has **not** been established by this investigation.

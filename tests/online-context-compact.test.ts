@@ -4,6 +4,7 @@
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CompactOptions, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { describe, expect, it, vi } from "vitest";
 import {
 	BOUNDARY_COMPACTION_INSTRUCTIONS,
@@ -142,6 +143,12 @@ describe("Online Context Compact extension", () => {
 			const raw: AgentMessage = shape === "masked archive"
 				? { role: "toolResult", toolCallId: "large-result", toolName: "read", content: [{ type: "text", text: "x".repeat(80_000) }], isError: false, timestamp: 0 }
 				: assistant("x".repeat(1_000));
+			if (raw.role === "toolResult") {
+				manager.appendMessage(fauxAssistantMessage(
+					fauxToolCall(raw.toolName, { path: "synthetic.txt" }, { id: raw.toolCallId }),
+					{ stopReason: "toolUse" },
+				));
+			}
 			manager.appendMessage(raw);
 			manager.appendMessage({ role: "user", content: "y".repeat(160_000), timestamp: 1 });
 			manager.appendMessage(assistant("tail"));

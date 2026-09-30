@@ -138,6 +138,7 @@ Evidence-Preserving Reducer may send eligible diagnostic-log content to its conf
 | [Compatibility](docs/compatibility.md) | Supported Pi APIs and standalone integration details |
 | [Security](SECURITY.md) | Local storage, remote reduction, and sensitive behavior |
 | [Agent installation](agents-install.md) | Reproducible installation and all-enabled validation procedure |
+| [Fixes and real-provider verification](docs/research/2026-09-30-fixes-validation.md) | Implemented reliability changes, regression evidence, live Pi runs, and remaining dependency gate |
 
 ## Development
 
