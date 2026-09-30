@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
 	buildSessionContext,
@@ -45,9 +46,12 @@ function messageTokens(messages: readonly AgentMessage[]): number {
 	return messages.reduce((total, message) => total + estimateTokens(message), 0);
 }
 
+// Tool call ids can repeat across responses; the timestamp pairs each stored
+// result with its own projection.
 function projectedMessages(messages: readonly AgentMessage[], observed: readonly AgentMessage[]): AgentMessage[] {
-	const results = new Map(observed.flatMap((message) => message.role === "toolResult" ? [[message.toolCallId, message] as const] : []));
-	return messages.map((message) => message.role === "toolResult" ? results.get(message.toolCallId) ?? message : message);
+	const key = (message: ToolResultMessage): string => `${message.toolCallId}\0${message.timestamp}`;
+	const results = new Map(observed.flatMap((message) => message.role === "toolResult" ? [[key(message), message] as const] : []));
+	return messages.map((message) => message.role === "toolResult" ? results.get(key(message)) ?? message : message);
 }
 
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;

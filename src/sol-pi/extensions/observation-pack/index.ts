@@ -18,6 +18,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -49,13 +50,19 @@ const RECALL_LIMITS = {
 	maxLines: RECALL_MAX_LINES - RECALL_HEADER_LINES,
 };
 
+// Some providers reuse or omit tool call ids across responses; the result's
+// timestamp keeps a later result from inheriting an earlier one's exposure.
+function resultKey(message: ToolResultMessage): string {
+	return `${message.toolCallId}\0${message.timestamp}`;
+}
+
 function responseCounts(messages: readonly AgentMessage[]): Map<string, number> {
 	const counts = new Map<string, number>();
 	let responses = 0;
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
 		if (message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted") responses++;
-		if (message?.role === "toolResult") counts.set(message.toolCallId, responses);
+		if (message?.role === "toolResult" && !counts.has(resultKey(message))) counts.set(resultKey(message), responses);
 	}
 	return counts;
 }
@@ -177,7 +184,7 @@ export function createObservationPackExtension(): ExtensionFactory {
 					if (!observation) continue;
 					await ensureStored(observation);
 
-					const previousSends = branchCounts.get(message.toolCallId) ?? contextCounts.get(message.toolCallId) ?? 0;
+					const previousSends = branchCounts.get(resultKey(message)) ?? contextCounts.get(resultKey(message)) ?? 0;
 					if (previousSends < FULL_SENDS) {
 						await ledgerFor(ctx)({
 							event: "full",
