@@ -38,6 +38,7 @@ describe("SoL-Pi config", () => {
 		expect(DEFAULT_CONFIG.cacheWriteReadRatio).toBe(12.5);
 		expect(DEFAULT_CONFIG.evidencePreservingReducerProvider).toBe(DEFAULT_REDUCER_PROVIDER);
 		expect(DEFAULT_CONFIG.evidencePreservingReducerModel).toBe(DEFAULT_REDUCER_MODEL);
+		expect(DEFAULT_CONFIG.requestLedger).toBe(false);
 	});
 
 	it("loads the global config as a fallback", () => {
@@ -102,6 +103,32 @@ describe("SoL-Pi config", () => {
 		expect(() => loadSolPiConfig(cwd, agentDir, true)).toThrow(
 			"SoL-Pi config onlineContextCompact must be boolean",
 		);
+	});
+
+	it.each([undefined, false, true])("loads the independent request ledger switch: %j", (requestLedger) => {
+		const { agentDir, cwd } = fixture();
+		writeFileSync(join(agentDir, "sol-pi.json"), JSON.stringify({ version: 1, requestLedger }));
+
+		expect(loadSolPiConfig(cwd, agentDir)).toEqual({
+			...DEFAULT_CONFIG,
+			requestLedger: requestLedger ?? false,
+		});
+	});
+
+	it.each([null, "true", 0, [], {}])("rejects a non-boolean request ledger switch: %j", (requestLedger) => {
+		const { agentDir, cwd } = fixture();
+		writeFileSync(join(agentDir, "sol-pi.json"), JSON.stringify({ version: 1, requestLedger }));
+
+		expect(() => loadSolPiConfig(cwd, agentDir)).toThrow("SoL-Pi config requestLedger must be boolean");
+	});
+
+	it("still rejects an unknown key beside the request ledger switch", () => {
+		const { agentDir, cwd } = fixture();
+		writeFileSync(
+			join(agentDir, "sol-pi.json"),
+			JSON.stringify({ version: 1, requestLedger: true, requestLedgerPath: "unused.jsonl" }),
+		);
+		expect(() => loadSolPiConfig(cwd, agentDir)).toThrow("Unknown SoL-Pi config key: requestLedgerPath");
 	});
 
 	it("loads an explicit cache write/read ratio, including zero", () => {

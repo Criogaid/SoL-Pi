@@ -61,6 +61,7 @@ describe("SoL-Pi configuration preflight", () => {
 				cacheWriteReadRatio: 12.5,
 				evidencePreservingReducerProvider: DEFAULT_EPR_PROVIDER,
 				evidencePreservingReducerModel: DEFAULT_EPR_MODEL,
+				requestLedger: false,
 			},
 		});
 	});
@@ -100,6 +101,43 @@ describe("SoL-Pi configuration preflight", () => {
 			evidencePreservingReducerProvider: DEFAULT_EPR_PROVIDER,
 			evidencePreservingReducerModel: DEFAULT_EPR_MODEL,
 		});
+	});
+
+	it.each([undefined, false, true])(
+		"does not require the diagnostic switch for the all-enabled profile: %j",
+		(requestLedger) => {
+			const result = run(writeConfig({ ...ALL_ENABLED, requestLedger }));
+			expect(result.status).toBe(0);
+			expect(JSON.parse(result.stdout)).toMatchObject({
+				all_enabled: true,
+				effective_config: { requestLedger: requestLedger ?? false },
+			});
+		},
+	);
+
+	it.each([undefined, false, true])("does not count the diagnostic as a mechanism: %j", (requestLedger) => {
+		const result = run(writeConfig({ version: 1, requestLedger }), false);
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout)).toMatchObject({
+			all_enabled: false,
+			effective_config: { requestLedger: requestLedger ?? false },
+		});
+
+		const required = run(writeConfig({ ...ALL_ENABLED, actionFusion: false, requestLedger }));
+		expect(required.status).toBe(1);
+		expect(required.stderr).toContain("actionFusion must be true");
+	});
+
+	it.each([null, "true", 0, [], {}])("rejects a non-boolean diagnostic switch: %j", (requestLedger) => {
+		const result = run(writeConfig({ ...ALL_ENABLED, requestLedger }));
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("requestLedger must be boolean");
+	});
+
+	it("rejects unknown keys even when request diagnostics are enabled", () => {
+		const result = run(writeConfig({ ...ALL_ENABLED, requestLedger: true, requestLedgerPath: "unused.jsonl" }));
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("unknown key: requestLedgerPath");
 	});
 
 	it.each([null, "12.5", -1])("rejects an invalid ratio: %j", (cacheWriteReadRatio) => {
