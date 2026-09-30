@@ -40,7 +40,7 @@ import {
 } from "./config.ts";
 import { createJournal, type Journal } from "./journal.ts";
 import { callReducer, type ProviderResult } from "./provider.ts";
-import { receiptText, validateReceipt } from "./receipt.ts";
+import { failureCoverageFits, receiptText, validateReceipt } from "./receipt.ts";
 
 export interface ReducedToolResult {
 	readonly content: ToolResultEvent["content"];
@@ -74,6 +74,10 @@ export async function reduceToolResult(
 	}
 	if (LIKELY_SECRET.test(body)) {
 		journal("fallback", { reason: "likely-secret" });
+		return undefined;
+	}
+	if (!failureCoverageFits(body)) {
+		journal("fallback", { reason: "failure-coverage-over-budget" });
 		return undefined;
 	}
 

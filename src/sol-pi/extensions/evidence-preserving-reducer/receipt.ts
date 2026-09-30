@@ -76,6 +76,46 @@ function lineNumberOf(body: string, quote: string): number | undefined {
 	return line;
 }
 
+function failureLines(body: string): Set<string> {
+	return new Set(body.split(/\r?\n/u).map((line) => line.trim()).filter((line) => FAILURE_SIGNAL.test(line)));
+}
+
+/**
+ * Whether the quote budget can cover every failure line, checked before paying
+ * for a reducer call. Greedy left-to-right windows are optimal for distinct
+ * lines; with repeated lines the answer is conservative and only skips
+ * reduction, never accepts a receipt.
+ */
+export function failureCoverageFits(body: string): boolean {
+	const uncovered = failureLines(body);
+	const spans: { readonly start: number; readonly end: number }[] = [];
+	let offset = 0;
+	for (const raw of body.split("\n")) {
+		const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+		const text = line.trim();
+		if (FAILURE_SIGNAL.test(text)) {
+			const start = offset + line.indexOf(text);
+			spans.push({ start, end: start + text.length });
+		}
+		offset += raw.length + 1;
+	}
+	let quotes = 0;
+	for (const [index, first] of spans.entries()) {
+		if (uncovered.size === 0) break;
+		if (!uncovered.has(body.slice(first.start, first.end))) continue;
+		quotes++;
+		if (quotes > MAX_EVIDENCE_ITEMS || first.end - first.start > MAX_QUOTE_CHARS) return false;
+		let end = first.end;
+		for (const next of spans.slice(index + 1)) {
+			if (next.end - first.start > MAX_QUOTE_CHARS) break;
+			end = next.end;
+		}
+		const window = body.slice(first.start, end);
+		for (const line of uncovered) if (window.includes(line)) uncovered.delete(line);
+	}
+	return uncovered.size === 0;
+}
+
 /**
  * Accept a receipt only when every claim in it can be checked against the
  * archived log: right schema, right source hash, status that matches the
@@ -144,11 +184,11 @@ export function validateReceipt(
 	) {
 		return { ok: false, reason: "missing-failure-evidence" };
 	}
-	const failureLines = new Set(body.split(/\r?\n/u).map((line) => line.trim()).filter((line) => FAILURE_SIGNAL.test(line)));
-	if (isError && (parsed.uncertain || failureLines.size === 0)) {
+	const required = failureLines(body);
+	if (isError && (parsed.uncertain || required.size === 0)) {
 		return { ok: false, reason: "uncertain-failure-evidence" };
 	}
-	for (const line of failureLines) {
+	for (const line of required) {
 		if (!evidence.some((item) => item.quote.includes(line))) {
 			return { ok: false, reason: "incomplete-failure-evidence" };
 		}
