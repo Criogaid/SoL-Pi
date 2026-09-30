@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createObservationPackExtension,
@@ -72,10 +73,14 @@ function observationObjectsDirectory(sessionDir: string): string {
 	return join(sessionDir, "sol-pi", SESSION_ID, "observation-pack", "objects");
 }
 
+function responses(count: number): AgentMessage[] {
+	return Array.from({ length: count }, () => fauxAssistantMessage("observation consumed"));
+}
+
 async function project(pi: FakePi, message: ToolResultMessage, sessionDir: string, count: number): Promise<string[]> {
 	const projected: string[] = [];
 	for (let index = 0; index < count; index += 1) {
-		const messages = await pi.emitContext([message], fakeContext(sessionDir));
+		const messages = await pi.emitContext([message, ...responses(index)], fakeContext(sessionDir));
 		const result = messages[0];
 		if (!result) throw new Error("missing projection");
 		projected.push(resultText(result));
@@ -184,7 +189,7 @@ describe("observation pack", () => {
 		activeTools = ["read", "obs_recall"];
 		const active: string[] = [];
 		for (let index = 0; index < 3; index += 1) {
-			active.push(resultText((await pi.emitContext([message], context))[0]!));
+			active.push(resultText((await pi.emitContext([message, ...responses(index)], context))[0]!));
 		}
 		expect(active[0]).toBe(body);
 		expect(active[1]).toBe(body);
@@ -201,7 +206,7 @@ describe("observation pack", () => {
 		expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(body);
 		expect(await readFile(observationPath(sessionDir, id), "utf8")).toBe(body);
 		activeTools = ["read", "obs_recall"];
-		expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(active[2]);
+		expect(resultText((await pi.emitContext([message, ...responses(3)], context))[0]!)).toBe(active[2]);
 	});
 
 	it("announces the first measured placeholder saving only in TUI mode", async () => {
@@ -218,10 +223,9 @@ describe("observation pack", () => {
 			ui: { notify, setStatus } as never,
 		});
 
-		await pi.emitContext([message], context);
-		await pi.emitContext([message], context);
-		await pi.emitContext([message], context);
-		await pi.emitContext([message], context);
+		for (let index = 0; index < 4; index++) {
+			await pi.emitContext([message, ...responses(index)], context);
+		}
 
 		expect(notify).toHaveBeenCalledTimes(1);
 		expect(notify.mock.calls[0]?.[0]).toMatch(
@@ -229,7 +233,7 @@ describe("observation pack", () => {
 		);
 	});
 
-	it("isolates objects and send counters by Pi session", async () => {
+	it("isolates objects and response history by Pi session", async () => {
 		const sessionDir = await sessionRoot();
 		const body = `session isolation\n${repeatPastThreshold("separate bytes\n")}`;
 		const message = toolResult(body);
@@ -240,8 +244,8 @@ describe("observation pack", () => {
 
 		for (const context of [contextA, contextB]) {
 			expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(body);
-			expect(resultText((await pi.emitContext([message], context))[0]!)).toBe(body);
-			expect(resultText((await pi.emitContext([message], context))[0]!)).toMatch(/^\[large tool result replaced/u);
+			expect(resultText((await pi.emitContext([message, ...responses(1)], context))[0]!)).toBe(body);
+			expect(resultText((await pi.emitContext([message, ...responses(2)], context))[0]!)).toMatch(/^\[large tool result replaced/u);
 		}
 
 		expect(await readFile(join(sessionDir, "sol-pi", "session-a", "observation-pack", "objects", `${id}.txt`), "utf8")).toBe(body);
@@ -259,8 +263,8 @@ describe("observation pack", () => {
 
 		const combined: string[][] = [];
 		for (let index = 0; index < 3; index += 1) {
-			const messages = await pi.emitContext([first, second], fakeContext(sessionDir));
-			combined.push(messages.map(resultText));
+			const messages = await pi.emitContext([first, ...responses(2), second, ...responses(index)], fakeContext(sessionDir));
+			combined.push(messages.filter((message) => message.role === "toolResult").map(resultText));
 		}
 
 		expect(combined[0]?.[0]).toBe(oldPlaceholder);
@@ -452,7 +456,7 @@ describe("observation pack", () => {
 
 		let projected: AgentMessage[] = [];
 		for (let request = 0; request < 3; request += 1) {
-			projected = await pi.emitContext([message], fakeContext(sessionDir));
+			projected = await pi.emitContext([message, ...responses(request)], fakeContext(sessionDir));
 		}
 
 		const result = projected[0];

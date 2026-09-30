@@ -5,8 +5,8 @@
 /**
  * ObservationPack - keep large tool results reachable without replaying them.
  *
- * A large tool result is sent in full for its first few provider requests, then
- * replaced with a short, stable placeholder for every later request. The
+ * A large tool result stays full until the active branch contains enough
+ * successful assistant responses after it, then becomes a stable placeholder. The
  * original bytes are archived by observation id outside the provider context,
  * and the agent pulls exact pages back with the registered `obs_recall` tool.
  *
@@ -17,6 +17,7 @@
  * Storage lives under the active Pi session directory.
  */
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -48,9 +49,19 @@ const RECALL_LIMITS = {
 	maxLines: RECALL_MAX_LINES - RECALL_HEADER_LINES,
 };
 
+function responseCounts(messages: readonly AgentMessage[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	let responses = 0;
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted") responses++;
+		if (message?.role === "toolResult") counts.set(message.toolCallId, responses);
+	}
+	return counts;
+}
+
 export function createObservationPackExtension(): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
-		const sentCounts = new Map<string, number>();
 		const ledgers = new Map<string, Ledger>();
 		const ledgerFor = (ctx: ExtensionContext): Ledger => {
 			const root = runtimeRoot(ctx);
@@ -151,17 +162,12 @@ export function createObservationPackExtension(): ExtensionFactory {
 				return { messages: event.messages };
 			}
 			const projected = [...event.messages];
-			// How many provider requests each message has already been part of,
-			// counted by the assistant messages that follow it.
-			const priorAssistantCounts = new Array<number>(event.messages.length);
-			let assistantCount = 0;
-
-			for (let index = event.messages.length - 1; index >= 0; index -= 1) {
-				priorAssistantCounts[index] = assistantCount;
-				if (event.messages[index]?.role === "assistant") assistantCount += 1;
-			}
-
-			const requestIndex = assistantCount + 1;
+			// Read the active lineage, including ancestors hidden by compaction.
+			// Retries without a successful response do not consume full exposure.
+			const branch = ctx.sessionManager.getBranch().flatMap((entry) => entry.type === "message" ? [entry.message] : []);
+			const branchCounts = responseCounts(branch);
+			const contextCounts = responseCounts(event.messages);
+			const requestIndex = event.messages.filter((message) => message.role === "assistant").length + 1;
 			for (let index = 0; index < event.messages.length; index += 1) {
 				const message = event.messages[index];
 				if (!message || !isPureTextResult(message)) continue;
@@ -171,8 +177,7 @@ export function createObservationPackExtension(): ExtensionFactory {
 					if (!observation) continue;
 					await ensureStored(observation);
 
-					const sendCountKey = `${root}\0${observation.id}`;
-					const previousSends = sentCounts.get(sendCountKey) ?? priorAssistantCounts[index] ?? 0;
+					const previousSends = branchCounts.get(message.toolCallId) ?? contextCounts.get(message.toolCallId) ?? 0;
 					if (previousSends < FULL_SENDS) {
 						await ledgerFor(ctx)({
 							event: "full",
@@ -184,7 +189,6 @@ export function createObservationPackExtension(): ExtensionFactory {
 							originalTokens: observation.tokens,
 							contentHash: observation.contentHash,
 						});
-						sentCounts.set(sendCountKey, previousSends + 1);
 						continue;
 					}
 
@@ -212,7 +216,6 @@ export function createObservationPackExtension(): ExtensionFactory {
 						);
 					}
 					projected[index] = { ...message, content: [{ type: "text", text: placeholder }] };
-					sentCounts.set(sendCountKey, previousSends + 1);
 				} catch (error) {
 					// Fail open: a packing failure must never cost the agent its observation.
 					const reason = error instanceof Error ? error.message : String(error);

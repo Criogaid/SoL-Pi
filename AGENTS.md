@@ -14,3 +14,5 @@ Online Context Compact plan validation and progress detection belong to `src/sol
 OCC's Pi cut-point and projection adapter lives in `online-context-compact/extension.ts`; `economics.ts` consumes estimates in cache-read token equivalents and `state.ts` accumulates unpaid debt. Keep raw summarizer input separate from provider-visible tool results. Hosts without the public cut-point helpers skip optional boundary compaction.
 
 Research findings and script contracts are indexed in `docs/research/2026-09-29-efficiency-review.md`. `scripts/analyze-session-efficiency.mjs` audits local sessions without exporting their content; `scripts/probe-compaction-policy.mjs` runs synthetic, offline diagnostics. Neither is part of the runtime package.
+
+ObservationPack derives full exposure from successful assistant responses in the active lineage, including ancestors hidden by compaction. Its archive is session-scoped; exposure has no independent mutable counter. Retry failures and aborts do not consume exposure.

@@ -120,6 +120,7 @@ ObservationPack and Evidence-Preserving Reducer store session-specific archives 
 ```
 
 They archive eligible source material in this directory. The archived copies remain local and are not automatically deleted when the Pi session ends.
+ObservationPack derives exposure from successful assistant responses on the active branch. Forking, returning to a branch, retrying a failed call, or compacting history does not reuse a counter from another branch.
 
 Online Context Compact stores its state in Pi's session log. After a successful compaction, it starts a new turn and automatically continues the active task. Cancelling the run or exiting Pi does not trigger automatic continuation.
 

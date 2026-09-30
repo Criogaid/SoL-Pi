@@ -43,6 +43,7 @@ This preflight does not make every valid SoL-Pi configuration all-enabled. Witho
 
 - `actionFusion`: registers SoL-Pi replacements for Pi's `edit` and `write` tools.
 - `observationPack`: registers `obs_recall` and a provider-context projection handler.
+  Full observation exposure is derived from successful assistant responses following the result on the active session branch (`FULL_SENDS` in `observation-pack/observation.ts`). Failed or aborted attempts do not advance it. Forks and returned branches use their own histories; retained observations keep their exposure history across compaction and resume.
 - `evidencePreservingReducer`: registers a `tool_result` handler and delegates long diagnostic-log reduction to the configured reducer provider/model.
 - `evidencePreservingReducerProvider`: provider namespace used to resolve the reducer model through Pi's model registry.
 - `evidencePreservingReducerModel`: model id used for Evidence-Preserving Reducer.
