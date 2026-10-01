@@ -127,11 +127,23 @@ export function isObservationId(id: string): boolean {
 	return OBSERVATION_ID_PATTERN.test(id);
 }
 
-export function createObservation(message: ToolResultMessage, runtimeRoot: string): Observation | undefined {
+export function resolveThresholdBytes(value: number | undefined): number {
+	const resolved = value ?? THRESHOLD_BYTES;
+	if (!Number.isSafeInteger(resolved) || resolved < 0) {
+		throw new Error("ObservationPack thresholdBytes must be a non-negative safe integer");
+	}
+	return resolved;
+}
+
+export function createObservation(
+	message: ToolResultMessage,
+	runtimeRoot: string,
+	thresholdBytes = THRESHOLD_BYTES,
+): Observation | undefined {
 	const text = textFromResult(message);
 	if (containsReducerReceipt(text)) return undefined;
 	const bytes = Buffer.byteLength(text, "utf8");
-	if (bytes <= THRESHOLD_BYTES) return undefined;
+	if (bytes <= thresholdBytes) return undefined;
 	if (!runtimeRoot) throw new Error("Persistent SoL-Pi runtime directory is unavailable");
 
 	const contentHash = hash(text);

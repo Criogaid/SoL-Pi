@@ -38,6 +38,7 @@ import {
 	placeholderFor,
 	type RecallChunk,
 	readRecallChunk,
+	resolveThresholdBytes,
 } from "./observation.ts";
 
 const RECALL_MAX_BYTES = 16 * 1024;
@@ -67,7 +68,13 @@ function responseCounts(messages: readonly AgentMessage[]): Map<string, number> 
 	return counts;
 }
 
-export function createObservationPackExtension(): ExtensionFactory {
+export type ObservationPackOptions = {
+	/** Strict lower bound on UTF-8 result bytes; defaults to THRESHOLD_BYTES. For controlled experiments only. */
+	readonly thresholdBytes?: number;
+};
+
+export function createObservationPackExtension(options: ObservationPackOptions = {}): ExtensionFactory {
+	const thresholdBytes = resolveThresholdBytes(options.thresholdBytes);
 	return (pi: ExtensionAPI) => {
 		const ledgers = new Map<string, Ledger>();
 		const ledgerFor = (ctx: ExtensionContext): Ledger => {
@@ -180,7 +187,7 @@ export function createObservationPackExtension(): ExtensionFactory {
 				if (!message || !isPureTextResult(message)) continue;
 
 				try {
-					const observation = createObservation(message, root);
+					const observation = createObservation(message, root, thresholdBytes);
 					if (!observation) continue;
 					await ensureStored(observation);
 
@@ -241,6 +248,7 @@ export {
 	type Observation,
 	PLACEHOLDER_EXCERPT_BYTES,
 	placeholderFor,
+	resolveThresholdBytes,
 	THRESHOLD_BYTES,
 } from "./observation.ts";
 
