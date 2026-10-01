@@ -69,7 +69,7 @@ function responseCounts(messages: readonly AgentMessage[]): Map<string, number> 
 }
 
 export type ObservationPackOptions = {
-	/** Strict lower bound on UTF-8 result bytes; defaults to THRESHOLD_BYTES. For controlled experiments only. */
+	/** Strict lower bound on UTF-8 result bytes; defaults to THRESHOLD_BYTES. */
 	readonly thresholdBytes?: number;
 };
 
@@ -252,8 +252,8 @@ export {
 	THRESHOLD_BYTES,
 } from "./observation.ts";
 
-export function registerObservationPack(pi: ExtensionAPI): void {
-	createObservationPackExtension()(pi);
+export function registerObservationPack(pi: ExtensionAPI, thresholdBytes?: number): void {
+	createObservationPackExtension({ thresholdBytes })(pi);
 }
 
 export default registerObservationPack;

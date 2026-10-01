@@ -10,6 +10,7 @@ import {
 	DEFAULT_REDUCER_MODEL,
 	DEFAULT_REDUCER_PROVIDER,
 } from "./extensions/evidence-preserving-reducer/config.ts";
+import { THRESHOLD_BYTES } from "./extensions/observation-pack/observation.ts";
 
 export const DEFAULT_CACHE_WRITE_READ_RATIO = 12.5;
 
@@ -17,6 +18,7 @@ export interface SolPiConfig {
 	readonly version: 1;
 	readonly actionFusion: boolean;
 	readonly observationPack: boolean;
+	readonly observationPackThresholdBytes: number;
 	readonly evidencePreservingReducer: boolean;
 	readonly evidencePreservingReducerModel: string;
 	readonly evidencePreservingReducerProvider: string;
@@ -29,6 +31,7 @@ export const DEFAULT_CONFIG: SolPiConfig = Object.freeze({
 	version: 1,
 	actionFusion: false,
 	observationPack: false,
+	observationPackThresholdBytes: THRESHOLD_BYTES,
 	evidencePreservingReducer: false,
 	evidencePreservingReducerModel: DEFAULT_REDUCER_MODEL,
 	evidencePreservingReducerProvider: DEFAULT_REDUCER_PROVIDER,
@@ -52,6 +55,7 @@ const CONFIG_KEYS = new Set<string>([
 	...DIAGNOSTIC_KEYS,
 	...STRING_KEYS,
 	"cacheWriteReadRatio",
+	"observationPackThresholdBytes",
 ]);
 
 export function findConfigPath(
@@ -109,6 +113,16 @@ export function loadSolPiConfig(
 	) {
 		throw new Error(`SoL-Pi config cacheWriteReadRatio must be a finite non-negative number: ${path}`);
 	}
+	const observationPackThresholdBytes = Object.hasOwn(record, "observationPackThresholdBytes")
+		? record.observationPackThresholdBytes
+		: THRESHOLD_BYTES;
+	if (
+		typeof observationPackThresholdBytes !== "number" ||
+		!Number.isSafeInteger(observationPackThresholdBytes) ||
+		observationPackThresholdBytes < 0
+	) {
+		throw new Error(`SoL-Pi config observationPackThresholdBytes must be a non-negative safe integer: ${path}`);
+	}
 	const evidencePreservingReducerModel = stringConfigValue(
 		record,
 		"evidencePreservingReducerModel",
@@ -126,6 +140,7 @@ export function loadSolPiConfig(
 		...DEFAULT_CONFIG,
 		...record,
 		cacheWriteReadRatio,
+		observationPackThresholdBytes,
 		evidencePreservingReducerModel,
 		evidencePreservingReducerProvider,
 	}) as SolPiConfig;

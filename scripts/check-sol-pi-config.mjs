@@ -13,11 +13,12 @@ const FEATURE_KEYS = [
 	"onlineContextCompact",
 ];
 const DEFAULT_CACHE_WRITE_READ_RATIO = 12.5;
+const DEFAULT_OBSERVATION_PACK_THRESHOLD_BYTES = 10 * 1024;
 const DEFAULT_EPR_REDUCER_PROVIDER = ["openai", "codex"].join("-");
 const DEFAULT_EPR_REDUCER_MODEL = ["gpt-5.6", "luna"].join("-");
 const DIAGNOSTIC_KEYS = ["requestLedger"];
 const STRING_KEYS = ["evidencePreservingReducerModel", "evidencePreservingReducerProvider"];
-const CONFIG_KEYS = new Set(["version", ...FEATURE_KEYS, ...DIAGNOSTIC_KEYS, ...STRING_KEYS, "cacheWriteReadRatio"]);
+const CONFIG_KEYS = new Set(["version", ...FEATURE_KEYS, ...DIAGNOSTIC_KEYS, ...STRING_KEYS, "cacheWriteReadRatio", "observationPackThresholdBytes"]);
 
 function fail(message) {
 	throw new Error(message);
@@ -91,6 +92,17 @@ function validateConfig(value, requireAllEnabled) {
 		fail("cacheWriteReadRatio must be a finite non-negative number");
 	}
 	effective.cacheWriteReadRatio = cacheWriteReadRatio;
+	const observationPackThresholdBytes = Object.hasOwn(value, "observationPackThresholdBytes")
+		? value.observationPackThresholdBytes
+		: DEFAULT_OBSERVATION_PACK_THRESHOLD_BYTES;
+	if (
+		typeof observationPackThresholdBytes !== "number" ||
+		!Number.isSafeInteger(observationPackThresholdBytes) ||
+		observationPackThresholdBytes < 0
+	) {
+		fail("observationPackThresholdBytes must be a non-negative safe integer");
+	}
+	effective.observationPackThresholdBytes = observationPackThresholdBytes;
 	effective.evidencePreservingReducerModel = stringConfigValue(
 		value,
 		"evidencePreservingReducerModel",

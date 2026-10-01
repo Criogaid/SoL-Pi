@@ -14,7 +14,7 @@ import { registerRequestLedger } from "./request-ledger.ts";
 export function registerConfiguredFeatures(pi: ExtensionAPI, config: SolPiConfig): void {
 	const recordDiagnostic = config.requestLedger ? registerRequestLedger(pi) : undefined;
 	if (config.actionFusion) registerActionFusion(pi);
-	if (config.observationPack) registerObservationPack(pi);
+	if (config.observationPack) registerObservationPack(pi, config.observationPackThresholdBytes);
 	if (config.evidencePreservingReducer) {
 		registerEvidencePreservingReducer(pi, {
 			reducerModel: config.evidencePreservingReducerModel,

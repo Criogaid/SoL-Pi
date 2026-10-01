@@ -27,7 +27,7 @@ The project file replaces the global file. SoL-Pi does not merge them.
 }
 ```
 
-Feature keys may be omitted and then default to `false`. `cacheWriteReadRatio` may be omitted and then defaults to `12.5`; when present it must be a finite non-negative number, and `0` explicitly means that a cache write adds no cost relative to a cache read. `evidencePreservingReducerProvider` and `evidencePreservingReducerModel` may be omitted and then use the built-in reducer route; when present each must be a non-empty string. Unknown keys, unsupported versions, malformed JSON, non-boolean feature values, invalid ratios, and invalid reducer model fields stop extension loading with a direct error.
+Feature keys may be omitted and then default to `false`. `cacheWriteReadRatio` may be omitted and then defaults to `12.5`; when present it must be a finite non-negative number, and `0` explicitly means that a cache write adds no cost relative to a cache read. `evidencePreservingReducerProvider` and `evidencePreservingReducerModel` may be omitted and then use the built-in reducer route; when present each must be a non-empty string. `observationPackThresholdBytes` may be omitted and then defaults to `10240`; when present it must be a non-negative safe integer. Unknown keys, unsupported versions, malformed JSON, non-boolean feature values, invalid ratios, invalid thresholds, and invalid reducer model fields stop extension loading with a direct error.
 
 For the managed all-enabled installation described in the [agent installation and configuration protocol](../agents-install.md), validate the effective file before starting Pi:
 
@@ -43,6 +43,7 @@ This preflight does not make every valid SoL-Pi configuration all-enabled. Witho
 
 - `actionFusion`: registers SoL-Pi replacements for Pi's `edit` and `write` tools.
 - `observationPack`: registers `obs_recall` and a provider-context projection handler.
+  Only pure-text, non-error results whose UTF-8 size is strictly greater than `observationPackThresholdBytes` participate.
   Full observation exposure is derived from successful assistant responses following the result on the active session branch (`FULL_SENDS` in `observation-pack/observation.ts`). Failed or aborted attempts do not advance it. Forks and returned branches use their own histories; retained observations keep their exposure history across compaction and resume.
 - `evidencePreservingReducer`: registers a `tool_result` handler and delegates long diagnostic-log reduction to the configured reducer provider/model. Every distinct line matching `FAILURE_SIGNAL` must occur in a verified quote, even if a wrapper exited successfully. Missing coverage, a line exceeding the quotation budget, or uncertain/unrecognized failing output keeps the original tool output. The reducer model is not called only when the quote budget provably cannot cover those lines; undecided cases still reach the reducer and receipt validation. This guard covers recognizable failure lines; it is not a semantic proof that every possible diagnostic format was understood.
 - `evidencePreservingReducerProvider`: provider namespace used to resolve the reducer model through Pi's model registry.
