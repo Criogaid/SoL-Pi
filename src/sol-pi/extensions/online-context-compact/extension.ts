@@ -185,6 +185,19 @@ function validPositiveInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isCompactionCancellation(error: Error): boolean {
+	return error.name === "AbortError" || error.message === "Compaction cancelled";
+}
+
+// Host and provider error text can carry paths or URLs; the ledger keeps only the stop point.
+function compactionFailureKind(error: Error): string {
+	if (error.message === "Already compacted") return "already_compacted";
+	if (error.message.startsWith("Nothing to compact")) return "nothing_to_compact";
+	return "other";
+}
+
+type SelectionClearCause = "correction" | "restore" | "shutdown" | "compaction";
+
 export function createOnlineContextCompactExtension(options: OnlineContextCompactOptions = {}): ExtensionFactory {
 	const keepRecentTokens = resolveKeepRecentTokens(options.keepRecentTokens);
 	const cacheWriteReadRatio = resolveCacheWriteReadRatio(options.cacheWriteReadRatio);
@@ -207,8 +220,19 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		const releaseParentContinuation = (continuation: PendingContinuation | undefined): void => {
 			if (continuation) setTimeout(continuation.resolve, 0);
 		};
+		// Each selected boundary reports where it stopped: compacted and continued,
+		// cancelled, failed, or cleared before compaction started.
+		const reportSettlement = (
+			context: ExtensionContext,
+			outcome: string,
+			fields: Readonly<Record<string, unknown>> = {},
+		): void => options.recordDiagnostic?.(context, { event: "occ_settlement", outcome, ...fields });
+		const reportClearedSelection = (context: ExtensionContext, cause: SelectionClearCause): void => {
+			if (selected || activeDebt) reportSettlement(context, "cleared", { cause, started: activeDebt !== undefined });
+		};
 
 		const restore = (context: ExtensionContext): void => {
+			reportClearedSelection(context, "restore");
 			releaseContinuation();
 			state = restoreOnlineState(context.sessionManager.getBranch());
 			restored = true;
@@ -282,6 +306,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				return { action: "continue" as const };
 			}
 			ensureRestored(context);
+			reportClearedSelection(context, "correction");
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;
@@ -367,6 +392,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			const pending = selected;
 			selected = undefined;
 			if (!context.isIdle()) {
+				if (pending) reportSettlement(context, "busy");
 				selected = pending;
 				nextContinuation = parentContinuation;
 				return;
@@ -379,8 +405,10 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			activeDebt = { decision: pending.decision };
 			let compacted = false;
 			let compactionError: Error | undefined;
+			let stage: "compact" | "continuation" = "compact";
 			try {
 				compactionInFlight = true;
+				reportSettlement(context, "compacting");
 				await new Promise<void>((resolve) => {
 					let finished = false;
 					const finish = (): void => {
@@ -415,15 +443,13 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 					});
 				});
 				compactionInFlight = false;
-				if (
-					compactionError &&
-					compactionError.name !== "AbortError" &&
-					compactionError.message !== "Compaction cancelled"
-				) {
-					throw compactionError;
+				if (compactionError) {
+					if (!isCompactionCancellation(compactionError)) throw compactionError;
+					reportSettlement(context, "cancelled", { stage });
 				}
 
 				if (compacted) {
+					stage = "continuation";
 					let resolveContinuation!: () => void;
 					const continuation: PendingContinuation = {
 						promise: new Promise<void>((resolve) => {
@@ -450,10 +476,16 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						// Pi 0.87 defers turns queued from agent_settled until every handler returns.
 						nextContinuation = undefined;
 						continuation.resolve();
+						reportSettlement(context, "continuation_queued");
 					} else {
 						await continuation.promise;
+						reportSettlement(context, "continued");
 					}
 				}
+			} catch (error) {
+				const failure = error instanceof Error ? error : new Error(String(error));
+				reportSettlement(context, "failed", { stage, failure: compactionFailureKind(failure) });
+				throw error;
 			} finally {
 				compactionInFlight = false;
 				activeDebt = undefined;
@@ -485,6 +517,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				repaymentTokens: savedTokens,
 				summaryCostReported: summaryCost ?? null,
 			});
+			if (!decision) reportClearedSelection(context, "compaction");
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;
@@ -494,7 +527,8 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			).messages;
 		});
 
-		pi.on("session_shutdown", () => {
+		pi.on("session_shutdown", (_event, context) => {
+			reportClearedSelection(context, "shutdown");
 			releaseContinuation();
 			pendingBoundary = undefined;
 			selected = undefined;
