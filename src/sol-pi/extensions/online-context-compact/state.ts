@@ -28,6 +28,7 @@ export type OnlineState = {
 	readonly positiveContextDeltaTotal: number;
 	readonly positiveContextDeltaCount: number;
 	readonly nativeCompactionCount: number;
+	readonly lastCompactionRequestCount: number | null;
 	readonly cacheDebtTokens: number;
 	readonly cacheDebtRepaymentTokens: number;
 };
@@ -45,6 +46,7 @@ export function initialOnlineState(): OnlineState {
 		positiveContextDeltaTotal: 0,
 		positiveContextDeltaCount: 0,
 		nativeCompactionCount: 0,
+		lastCompactionRequestCount: null,
 		cacheDebtTokens: 0,
 		cacheDebtRepaymentTokens: 0,
 	};
@@ -93,6 +95,8 @@ function parseOnlineState(value: unknown): OnlineState | undefined {
 	const completedBoundaryRequestCounts = Array.isArray(record.completedBoundaryRequestCounts)
 		? record.completedBoundaryRequestCounts
 		: undefined;
+	// Older v1 entries predate the cooldown and establish no request baseline.
+	const lastCompactionRequestCount = record.lastCompactionRequestCount ?? null;
 	if (
 		record.version !== 1 ||
 		!plan ||
@@ -104,6 +108,7 @@ function parseOnlineState(value: unknown): OnlineState | undefined {
 		!nonNegativeInteger(record.requestCount) ||
 		!nonNegativeInteger(record.lastBoundaryRequestCount) ||
 		record.lastBoundaryRequestCount > record.requestCount ||
+		!(lastCompactionRequestCount === null || (nonNegativeInteger(lastCompactionRequestCount) && lastCompactionRequestCount <= record.requestCount)) ||
 		!(record.lastContextTokens === null || nonNegativeInteger(record.lastContextTokens)) ||
 		!finiteNonNegative(record.positiveContextDeltaTotal) ||
 		!nonNegativeInteger(record.positiveContextDeltaCount) ||
@@ -125,6 +130,7 @@ function parseOnlineState(value: unknown): OnlineState | undefined {
 		positiveContextDeltaTotal: record.positiveContextDeltaTotal,
 		positiveContextDeltaCount: record.positiveContextDeltaCount,
 		nativeCompactionCount: record.nativeCompactionCount,
+		lastCompactionRequestCount,
 		cacheDebtTokens: record.cacheDebtTokens,
 		cacheDebtRepaymentTokens: record.cacheDebtRepaymentTokens,
 	};
@@ -180,14 +186,28 @@ export function recordCompaction(
 	return {
 		...state,
 		epoch: state.epoch + 1,
-		plan: [],
+		plan: [...state.plan],
 		pendingProgress: [],
 		lastContextTokens: null,
-		positiveContextDeltaTotal: 0,
-		positiveContextDeltaCount: 0,
+		lastCompactionRequestCount: state.requestCount,
 		nativeCompactionCount: state.nativeCompactionCount + 1,
 		cacheDebtTokens: state.cacheDebtTokens + Math.max(0, debt.debtTokens),
 		cacheDebtRepaymentTokens: state.cacheDebtRepaymentTokens + Math.max(0, debt.repaymentTokens),
+	};
+}
+
+export function recordCompletedPlanHandoff(state: OnlineState): OnlineState {
+	if (state.plan.length === 0 || state.plan.some((step) => step.status !== "completed")) return state;
+	return {
+		...state,
+		epoch: state.epoch + 1,
+		plan: [],
+		pendingProgress: [],
+		lastBoundaryRequestCount: state.requestCount,
+		completedBoundaryRequestCounts: [],
+		lastContextTokens: null,
+		positiveContextDeltaTotal: 0,
+		positiveContextDeltaCount: 0,
 	};
 }
 

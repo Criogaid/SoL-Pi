@@ -124,9 +124,9 @@ ObservationPack derives exposure from successful assistant responses on the acti
 
 Online Context Compact stores its state in Pi's session log. After a successful compaction, it starts a new turn and automatically continues the active task. If Pi rejects a boundary compaction because there is nothing to compact, it was already compacted, or the summary is incomplete, OCC continues with the existing context. It waits for successful non-plan tool work or new input before retrying a rejected compaction. Cancelling the run or exiting Pi does not trigger automatic continuation.
 
-Compaction boundaries require an observed plan step to move from `pending` or `in_progress` to `completed` with the same id and goal. Importing completed steps, including when rebuilding a plan after compaction, records the plan without creating a new boundary.
+Compaction boundaries require an observed plan step to move from `pending` or `in_progress` to `completed` with the same id and goal. Importing completed steps records a baseline without creating a new boundary. Compaction preserves the plan and step IDs. New user input after the entire plan completes starts a new task baseline while retaining session debt.
 
-OCC estimates savings at Pi's actual retained-history boundary using the latest visible tool results. Its policy includes retained-context cache rebuilding, summary cost, and outstanding debt from earlier compactions. See [runtime inputs and estimation limits](docs/configuration.md#online-context-compact-runtime-inputs).
+OCC estimates savings at Pi's actual retained-history boundary using the latest observed context projection. Missing or ambiguous projections contribute no proven savings. Its policy includes retained-context cache rebuilding, summary cost, and outstanding debt from earlier compactions. Economic compaction waits for two provider requests after compaction; window protection can act sooner. See [runtime inputs and estimation limits](docs/configuration.md#online-context-compact-runtime-inputs).
 
 Evidence-Preserving Reducer may send eligible diagnostic-log content to its configured reducer model using Pi-managed authentication. Review [SECURITY.md](SECURITY.md) before enabling it. Do not enable remote reduction for logs that must remain local.
 

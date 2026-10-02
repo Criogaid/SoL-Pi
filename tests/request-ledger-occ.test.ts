@@ -75,6 +75,7 @@ async function fixture(overrides: Partial<ExtensionContext> = {}, history = true
 		...overrides,
 	});
 	await pi.emit("session_start", { type: "session_start" }, context);
+	await pi.emitContext(manager.getBranch().flatMap((entry) => entry.type === "message" ? [entry.message] : []), context);
 	return { pi, context, abort, recordDiagnostic };
 }
 

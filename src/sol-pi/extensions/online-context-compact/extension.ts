@@ -3,10 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
-	buildSessionContext,
 	estimateTokens,
 	type ExtensionContext,
 	type ExtensionFactory,
@@ -24,6 +22,7 @@ import {
 	initialOnlineState,
 	recordBoundary,
 	recordCompaction,
+	recordCompletedPlanHandoff,
 	recordCorrection,
 	recordProviderRequest,
 	restoreOnlineState,
@@ -46,12 +45,49 @@ function messageTokens(messages: readonly AgentMessage[]): number {
 	return messages.reduce((total, message) => total + estimateTokens(message), 0);
 }
 
-// Tool call ids can repeat across responses; the timestamp pairs each stored
-// result with its own projection.
-function projectedMessages(messages: readonly AgentMessage[], observed: readonly AgentMessage[]): AgentMessage[] {
-	const key = (message: ToolResultMessage): string => `${message.toolCallId}\0${message.timestamp}`;
-	const results = new Map(observed.flatMap((message) => message.role === "toolResult" ? [[key(message), message] as const] : []));
-	return messages.map((message) => message.role === "toolResult" ? results.get(key(message)) ?? message : message);
+/** Attribute only observed provider-visible tokens to their active source entries. */
+function projectedEntryTokens(
+	entries: readonly SessionEntry[],
+	observed: readonly AgentMessage[],
+	toMessages: (entry: SessionEntry) => AgentMessage[],
+): ReadonlyMap<string, number> {
+	const lastCompaction = entries.findLastIndex((entry) => entry.type === "compaction");
+	let active = entries;
+	const compaction = entries[lastCompaction];
+	if (compaction?.type === "compaction") {
+		const firstKept = entries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
+		active = [compaction, ...(firstKept >= 0 ? entries.slice(firstKept, lastCompaction) : []), ...entries.slice(lastCompaction + 1)];
+	}
+	const keyOf = (message: AgentMessage): string => message.role === "toolResult"
+		? `tool:${JSON.stringify([message.toolCallId, message.toolName, message.timestamp])}`
+		: JSON.stringify(message);
+	const sources = new Map<string, string[]>();
+	for (const entry of active) {
+		if (entry.type === "compaction" && entry !== compaction) continue;
+		for (const message of toMessages(entry)) {
+			const key = keyOf(message);
+			const ids = sources.get(key) ?? [];
+			ids.push(entry.id);
+			sources.set(key, ids);
+		}
+	}
+	const visible = new Map<string, number[]>();
+	for (const message of observed) {
+		const key = keyOf(message);
+		const sizes = visible.get(key) ?? [];
+		sizes.push(estimateTokens(message));
+		visible.set(key, sizes);
+	}
+	const tokens = new Map<string, number>();
+	for (const [key, ids] of sources) {
+		const sizes = visible.get(key);
+		// Unknown or ambiguous projections cannot establish removable tokens.
+		if (!sizes || sizes.length !== ids.length || (key.startsWith("tool:") && ids.length > 1)) continue;
+		for (const [index, id] of ids.entries()) {
+			tokens.set(id, (tokens.get(id) ?? 0) + sizes[index]!);
+		}
+	}
+	return tokens;
 }
 
 export const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
@@ -60,7 +96,7 @@ export const BOUNDARY_COMPACTION_INSTRUCTIONS =
 	"Preserve completed work, verification results, important decisions, and remaining work.";
 export const POST_COMPACTION_PLAN_REMINDER =
 	"Online context compaction finished. The parent task is still active. " +
-	"Before continuing work, call update_plan with a fresh plan for the remaining work.";
+	"Continue the remaining work from the current plan. Preserve existing step IDs when updating progress.";
 
 const SKIPPED_COMPACTION_REMINDER =
 	"Online context compaction was skipped. The existing context is still available. " +
@@ -181,11 +217,15 @@ function estimateNativeCompaction(context: ExtensionContext, observed: readonly 
 	const summaryCostTokens = cost && cost.cacheRead > 0 && cost.input >= 0 && cost.output >= 0
 		? (summaryInputTokens * cost.input + memoTokens * cost.output) / cost.cacheRead
 		: null;
-	const beforeTokens = messageTokens(projectedMessages(buildSessionContext(path).messages, observed));
-	const retainedTokens = messageTokens(projectedMessages(messages(cut.firstKeptEntryIndex, path.length), observed));
+	const projected = projectedEntryTokens(path, observed, sessionEntryToContextMessages);
+	const lastCompaction = path.findLastIndex((entry) => entry.type === "compaction");
+	const archiveTokens = path.filter((entry, index) => entry.type === "compaction"
+		? index === lastCompaction
+		: index >= startIndex && index < cut.firstKeptEntryIndex)
+		.reduce((total, entry) => total + (projected.get(entry.id) ?? 0), 0);
 	return {
-		writeTokens: beforeTokens + tokenEstimate(context.getSystemPrompt()),
-		archiveTokens: Math.max(0, beforeTokens - retainedTokens),
+		writeTokens: messageTokens(observed) + tokenEstimate(context.getSystemPrompt()),
+		archiveTokens,
 		memoTokens,
 		summaryCostTokens,
 	};
@@ -246,10 +286,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			compactionRefused = false;
 			state = restoreOnlineState(context.sessionManager.getBranch());
 			restored = true;
-			observedMessages = buildSessionContext(
-				context.sessionManager.getEntries(),
-				context.sessionManager.getLeafId(),
-			).messages;
+			observedMessages = [];
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;
@@ -313,10 +350,15 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 
 		pi.on("input", (event, context) => {
 			compactionRefused = false;
+			ensureRestored(context);
 			if (event.streamingBehavior !== "steer" && !event.text.startsWith("CORRECTION:")) {
+				const next = recordCompletedPlanHandoff(state);
+				if (next !== state) {
+					state = next;
+					save();
+				}
 				return { action: "continue" as const };
 			}
-			ensureRestored(context);
 			reportClearedSelection(context, "correction");
 			pendingBoundary = undefined;
 			selected = undefined;
@@ -370,6 +412,8 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 				averageContextTokenIncrement,
 				contextWindowTokens,
 				priorCompactionCount: state.nativeCompactionCount,
+				requestsSinceLastCompaction: state.lastCompactionRequestCount === null
+					? null : state.requestCount - state.lastCompactionRequestCount,
 				carriedDebtTokens: state.cacheDebtTokens,
 				cacheDebtRepaymentTokens: state.cacheDebtRepaymentTokens,
 				cacheWriteReadRatio,
@@ -541,10 +585,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 			pendingBoundary = undefined;
 			selected = undefined;
 			activeDebt = undefined;
-			observedMessages = buildSessionContext(
-				context.sessionManager.getEntries(),
-				context.sessionManager.getLeafId(),
-			).messages;
+			observedMessages = [];
 		});
 
 		pi.on("session_shutdown", (_event, context) => {

@@ -184,7 +184,7 @@ describe("Online Context Compact extension", () => {
 				getContextUsage: () => ({ tokens: 195_000, contextWindow: 200_000, percent: 97.5 }),
 			});
 			await pi.emit("session_start", { type: "session_start" }, context);
-			await pi.emitContext(buildSessionMessages(), context);
+			await pi.emitContext(manager.getBranch().flatMap((entry) => entry.type === "message" ? [entry.message] : []), context);
 			await pi.emit("before_provider_request", { type: "before_provider_request", payload: {} }, context);
 			await runPlan(pi, context, "plan-open", { steps: OPEN });
 			await runPlan(pi, context, "plan-done", { steps: DONE, progress: PROGRESS });
@@ -269,7 +269,7 @@ describe("Online Context Compact extension", () => {
 		});
 
 		await pi.emit("session_start", { type: "session_start" }, context);
-		await pi.emitContext(buildSessionMessages(), context);
+		await pi.emitContext(manager.getBranch().flatMap((entry) => entry.type === "message" ? [entry.message] : []), context);
 		await pi.emit("before_provider_request", { type: "before_provider_request", payload: {} }, context);
 		await runPlan(pi, context, "plan-open", { steps: OPEN });
 		const planResult = await runPlan(pi, context, "plan-done", { steps: DONE, progress: PROGRESS });
@@ -334,14 +334,10 @@ describe("Online Context Compact extension", () => {
 		await expect(firstSettlement).resolves.toBeUndefined();
 		expect(firstSettlementFinished).toBe(true);
 		expect(await pi.emit("session_before_tree", { type: "session_before_tree" }, context)).toBeUndefined();
-		expect(restoreOnlineState(manager.entries)).toMatchObject({ nativeCompactionCount: 1, pendingProgress: [] });
+		expect(restoreOnlineState(manager.entries)).toMatchObject({ nativeCompactionCount: 1, pendingProgress: [], plan: DONE });
+		const completed = restoreOnlineState(manager.entries);
+		await pi.emit("input", { text: "Start the next task", streamingBehavior: "followUp" }, context);
+		expect(restoreOnlineState(manager.entries)).toMatchObject({ plan: [], cacheDebtTokens: completed.cacheDebtTokens, lastCompactionRequestCount: completed.lastCompactionRequestCount });
 		});
 	}
 });
-
-function buildSessionMessages(): AgentMessage[] {
-	return [
-		{ role: "user", content: `old ${"x".repeat(2_000)}`, timestamp: Date.now() },
-		assistant(`work ${"y".repeat(2_000)}`),
-	];
-}

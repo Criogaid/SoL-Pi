@@ -54,6 +54,8 @@ On Pi 0.85.1, a settlement barrier keeps the original `agent_settled` dispatch o
 
 Pi reports the session as idle while an extension-requested manual compaction is running. SoL-Pi cancels `session_before_tree` during that interval to prevent tree navigation from moving the active leaf underneath the compaction. Navigation works normally after the compaction callback settles.
 
+The compaction cut-point and projection adapter stays in `online-context-compact/extension.ts`. It maps only observed messages to active source entries, including the last compaction summary, without rerunning context hooks. Raw summarizer input remains separate from provider-visible savings. Successful compaction preserves the current plan; replaying completed steps produces no new completion transition. The persisted v1 state accepts older entries without `lastCompactionRequestCount`, treating their cooldown baseline as unknown.
+
 Online Context Compact reads `ExtensionContext.getContextUsage()` for both the context window and the provider-counted context size. When Pi reports no size — as it does between a compaction and the next answered request — the boundary falls back to its own estimate.
 
 The standalone entry passes `cacheWriteReadRatio` from `sol-pi.json` into Online Context Compact's cache-rebuild check. Pi model price metadata estimates summary cost in cache-read token equivalents. The configured ratio stays fixed; use a new session for a different model/pricing policy. Missing summary prices defer economic compaction while leaving window protection active. Hosts missing the public `findCutPoint`, `sessionEntryToContextMessages`, `convertToLlm`, or `serializeConversation` helpers skip optional boundary compaction and retain the host's native compaction policy.

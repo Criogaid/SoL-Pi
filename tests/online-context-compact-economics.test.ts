@@ -91,6 +91,13 @@ describe("Online Context Compact economics", () => {
 		});
 	});
 
+	it("waits for provider requests after compaction unless window protection applies", () => {
+		const input = { priorCompactionCount: 1, cacheWriteReadRatio: 2, requestsSinceLastCompaction: 1 };
+		expect(decision(input)).toMatchObject({ compact: false, reason: "deferred_post_compaction_cooldown" });
+		expect(decision({ ...input, requestsSinceLastCompaction: DEFAULT_COMPACTION_ECONOMICS.minimumRequestsSinceCompaction })).toMatchObject({ compact: true, reason: "economic" });
+		expect(decision({ ...input, contextTokens: 199_999 })).toMatchObject({ compact: true, reason: "window_protection" });
+	});
+
 	it("charges carried debt only after the first compaction", () => {
 		const result = decision({
 			priorCompactionCount: 1,
