@@ -35,7 +35,7 @@ Object access uses `O_NOFOLLOW` where available and compares the opened handle w
 
 ## Evidence-Preserving Reducer
 
-The reducer handles public `tool_result` events and resolves the configured reducer provider/model through Pi's model registry before calling `ExtensionContext.modelRegistry.complete()` when available. For the Pi 0.81.1 fork, which exposes no registry `complete()` method, it resolves authentication for that reducer model through `getApiKeyAndHeaders()` and calls the shared `@earendil-works/pi-ai/compat` completion API. The reducer preserves the original result whenever the configured reducer model is unavailable or eligibility, model-call, schema, source-hash, exact-quote, size, or likely-secret checks fail.
+The reducer handles public `tool_result` events and resolves the configured reducer provider/model through Pi's model registry before calling `ExtensionContext.modelRegistry.complete()`. Pi owns request-time authentication and provider dispatch. The reducer preserves the original result whenever the configured reducer model is unavailable or eligibility, model-call, schema, source-hash, exact-quote, size, or likely-secret checks fail.
 
 All persistent paths use `SessionManager.getSessionDir()` and `getSessionId()`, which are public in Pi 0.99.2. If the session directory is empty (`--no-session` or `SessionManager.inMemory()`), SoL-Pi lazily creates a private `sol-pi-<session-id>-<random>/` directory under `os.tmpdir()`. Its path is reused by session ID across contexts and both archiving mechanisms while the extension is loaded. These files remain available after worker shutdown for callers that need to read evidence; cleanup is left to the host or caller. SoL-Pi creates no configurable storage-path surface.
 
@@ -95,3 +95,13 @@ The earlier [real-provider verification](research/2026-09-30-fixes-validation.md
 The root manifest overrides `brace-expansion` to its patched version. The root lockfile omits Pi's `hasShrinkwrap` flag so npm applies that override instead of reinstalling the version in Pi's published shrinkwrap. Keep both changes together: editing the resolved version alone can make lockfile audit pass while `npm ci` still installs vulnerable files. Verify the installed dependency with `npm ls brace-expansion --all` after a clean install.
 
 These resolutions apply to this checkout. They do not update a separately installed Pi CLI or another project's dependency tree.
+
+## Pi 0.99 API reuse assessment
+
+This assessment uses the installed 0.99.2 public declarations and implementation. Action Fusion uses `ExtensionToolContext` and interprets `AgentToolResult.isError` to preserve command-failure reporting. EPR uses the required `ModelRegistry.find()` and `complete()` methods directly; the pre-0.99 fork authentication adapter is outside the supported peer range and has been removed.
+
+`ExtensionToolContext.executeTool()` runs nested calls through validation, hooks, and permissions and attaches nested-call metadata. Replacing Action Fusion's built-in Bash definition with it would change event delivery and could run reducers or diagnostics twice. The existing direct invocation preserves the current tool-result contract.
+
+`agent_before_settle` and actionable `turn_end` results can commit boundary entries and request continuation. Calling the current native `compact()` path inside an awaited boundary handler is unsuitable: compaction aborts the agent and waits for idle while the agent is waiting for that handler. Replacing it with draft compaction entries would also require reimplementing native summarization and lifecycle behavior. OCC therefore retains its tested `agent_settled` continuation path.
+
+Pi's public file-mutation queue does not replace Action Fusion's queue: the latter covers both the mutation and its follow-up command, while built-in mutation tools acquire their own queue internally. Nesting those operations under the same queue can deadlock.

@@ -17,7 +17,6 @@ import {
 } from "../src/sol-pi/extensions/evidence-preserving-reducer/index.ts";
 import {
 	callReducer,
-	type CompatComplete,
 } from "../src/sol-pi/extensions/evidence-preserving-reducer/provider.ts";
 import { FakePi, FakeSessionManager, fakeContext } from "./helpers.ts";
 
@@ -127,33 +126,20 @@ describe("SoL-Pi regression stress", () => {
 				const body = `ERROR stress failure\ncase=${i}\n${"diagnostic line\n".repeat(360 + (i % 20))}`;
 				const archive = await archiveBody(config.storeRoot, body);
 				let call: CapturedCall | undefined;
-				let authModel: Model<string> | undefined;
 				const context = fakeContext(new FakeSessionManager([], `epr-stress-${i}`, root), {
 					model: ACTIVE_MODEL,
 					modelRegistry: {
 						find: (provider: string, modelId: string) =>
 							provider === REDUCER_MODEL.provider && modelId === REDUCER_MODEL.id ? REDUCER_MODEL : undefined,
-						getApiKeyAndHeaders: async (model: Model<string>) => {
-							authModel = model;
-							return { ok: true, apiKey: "test-key", headers: {}, env: {}, baseUrl: "https://stress.invalid/v1" };
-						},
+						complete: reducerComplete((value) => {
+							call = value;
+						}),
 					} as unknown as ExtensionContext["modelRegistry"],
 				});
 
-				const result = await callReducer(
-					config,
-					"pytest -q",
-					true,
-					archive,
-					body,
-					context,
-					reducerComplete((value) => {
-						call = value;
-					}) as CompatComplete,
-				);
+				const result = await callReducer(config, "pytest -q", true, archive, body, context);
 
 				expect(result.ok).toBe(true);
-				expect(authModel).toBe(REDUCER_MODEL);
 				expect(call?.model).toMatchObject({ provider: REDUCER_MODEL.provider, id: REDUCER_MODEL.id });
 				expect(call?.model).not.toMatchObject({ provider: ACTIVE_MODEL.provider, id: ACTIVE_MODEL.id });
 				expect(call?.options).toMatchObject({ cacheRetention: "none", maxTokens: 2_048, timeoutMs: 90_000 });

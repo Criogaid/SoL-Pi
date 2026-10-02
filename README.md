@@ -130,7 +130,7 @@ Compaction boundaries require an observed plan step to move from `pending` or `i
 
 OCC estimates savings at Pi's actual retained-history boundary using the latest observed context projection. Missing or ambiguous projections contribute no proven savings. Its policy includes retained-context cache rebuilding, summary cost, and outstanding debt from earlier compactions. Economic compaction waits for two provider requests after compaction; window protection can act sooner. See [runtime inputs and estimation limits](docs/configuration.md#online-context-compact-runtime-inputs).
 
-Evidence-Preserving Reducer may send eligible diagnostic-log content to its configured reducer model using Pi-managed authentication. Review [SECURITY.md](SECURITY.md) before enabling it. Do not enable remote reduction for logs that must remain local.
+Evidence-Preserving Reducer may send eligible diagnostic-log content to its configured reducer model through Pi's public model registry, which manages authentication. Review [SECURITY.md](SECURITY.md) before enabling it. Do not enable remote reduction for logs that must remain local.
 
 ## Documentation
 

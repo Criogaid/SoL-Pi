@@ -12,15 +12,14 @@ import {
 	createWriteToolDefinition,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { complete as completeCompat } from "@earendil-works/pi-ai/compat";
 
 for (const [name, value] of Object.entries({
 	createBashToolDefinition,
 	createEditToolDefinition,
 	createWriteToolDefinition,
-	getApiKeyAndHeaders: ModelRegistry.prototype.getApiKeyAndHeaders,
+	modelRegistryComplete: ModelRegistry.prototype.complete,
+	modelRegistryFind: ModelRegistry.prototype.find,
 	getAgentDir,
-	piAiCompatComplete: completeCompat,
 	sessionManagerGetSessionDir: SessionManager.prototype.getSessionDir,
 	sessionManagerGetSessionId: SessionManager.prototype.getSessionId,
 })) {
