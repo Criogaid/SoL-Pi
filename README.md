@@ -122,7 +122,7 @@ ObservationPack and Evidence-Preserving Reducer store session-specific archives 
 They archive eligible source material in this directory. The archived copies remain local and are not automatically deleted when the Pi session ends.
 ObservationPack derives exposure from successful assistant responses on the active branch. Forking, returning to a branch, retrying a failed call, or compacting history does not reuse a counter from another branch.
 
-Online Context Compact stores its state in Pi's session log. After a successful compaction, it starts a new turn and automatically continues the active task. Cancelling the run or exiting Pi does not trigger automatic continuation.
+Online Context Compact stores its state in Pi's session log. After a successful compaction, it starts a new turn and automatically continues the active task. If Pi rejects a boundary compaction because there is nothing to compact, it was already compacted, or the summary is incomplete, OCC continues with the existing context. It waits for successful non-plan tool work or new input before retrying a rejected compaction. Cancelling the run or exiting Pi does not trigger automatic continuation.
 
 Compaction boundaries require an observed plan step to move from `pending` or `in_progress` to `completed` with the same id and goal. Importing completed steps, including when rebuilding a plan after compaction, records the plan without creating a new boundary.
 

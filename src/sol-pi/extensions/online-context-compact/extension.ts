@@ -62,6 +62,16 @@ export const POST_COMPACTION_PLAN_REMINDER =
 	"Online context compaction finished. The parent task is still active. " +
 	"Before continuing work, call update_plan with a fresh plan for the remaining work.";
 
+const SKIPPED_COMPACTION_REMINDER =
+	"Online context compaction was skipped. The existing context is still available. " +
+	"Continue the remaining work from the current plan.";
+// These host errors occur before a replacement summary is committed.
+const RECOVERABLE_COMPACTION_ERRORS = new Map([
+	["Nothing to compact (session too small)", "nothing_to_compact"],
+	["Already compacted", "already_compacted"],
+	["Summarization failed: generation hit the token cap and the summary is incomplete", "incomplete_summary"],
+]);
+
 export type OnlineContextCompactOptions = {
 	readonly cacheWriteReadRatio?: number | null;
 	readonly keepRecentTokens?: number;
@@ -191,9 +201,7 @@ function isCompactionCancellation(error: Error): boolean {
 
 // Host and provider error text can carry paths or URLs; the ledger keeps only the stop point.
 function compactionFailureKind(error: Error): string {
-	if (error.message === "Already compacted") return "already_compacted";
-	if (error.message.startsWith("Nothing to compact")) return "nothing_to_compact";
-	return "other";
+	return RECOVERABLE_COMPACTION_ERRORS.get(error.message) ?? "other";
 }
 
 type SelectionClearCause = "correction" | "restore" | "shutdown" | "compaction";
@@ -211,6 +219,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		let activeDebt: SelectedCompaction | undefined;
 		let nextContinuation: PendingContinuation | undefined;
 		let compactionInFlight = false;
+		let compactionRefused = false;
 
 		const releaseContinuation = (): void => {
 			const continuation = nextContinuation;
@@ -234,6 +243,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		const restore = (context: ExtensionContext): void => {
 			reportClearedSelection(context, "restore");
 			releaseContinuation();
+			compactionRefused = false;
 			state = restoreOnlineState(context.sessionManager.getBranch());
 			restored = true;
 			observedMessages = buildSessionContext(
@@ -302,6 +312,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("input", (event, context) => {
+			compactionRefused = false;
 			if (event.streamingBehavior !== "steer" && !event.text.startsWith("CORRECTION:")) {
 				return { action: "continue" as const };
 			}
@@ -316,9 +327,11 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 		});
 
 		pi.on("turn_end", (event, context) => {
+			// A restated plan cannot make a rejected compaction feasible.
+			if (event.toolResults.some((item) => item.toolName !== "update_plan" && !item.isError)) compactionRefused = false;
 			const boundary = pendingBoundary;
 			pendingBoundary = undefined;
-			if (!boundary || selected) return;
+			if (!boundary || selected || compactionRefused) return;
 			const report = (entry: Readonly<Record<string, unknown>>): void =>
 				options.recordDiagnostic?.(context, { event: "occ_boundary", ...entry });
 			const toolResult = event.toolResults.find((item) => item.toolCallId === boundary.toolCallId);
@@ -437,18 +450,24 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 							}
 						},
 						onError: (error) => {
+							activeDebt = undefined;
 							compactionError = error;
 							finish();
 						},
 					});
 				});
 				compactionInFlight = false;
-				if (compactionError) {
+				const recoverableError = compactionError !== undefined && RECOVERABLE_COMPACTION_ERRORS.has(compactionError.message);
+				if (compactionError && !recoverableError) {
 					if (!isCompactionCancellation(compactionError)) throw compactionError;
 					reportSettlement(context, "cancelled", { stage });
 				}
+				if (recoverableError) {
+					compactionRefused = true;
+					if (context.mode === "tui") context.ui.notify(SKIPPED_COMPACTION_REMINDER, "warning");
+				}
 
-				if (compacted) {
+				if (compacted || recoverableError) {
 					stage = "continuation";
 					let resolveContinuation!: () => void;
 					const continuation: PendingContinuation = {
@@ -462,7 +481,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						pi.sendMessage(
 							{
 								customType: "sol-pi-online-context-compact",
-								content: POST_COMPACTION_PLAN_REMINDER,
+								content: compacted ? POST_COMPACTION_PLAN_REMINDER : SKIPPED_COMPACTION_REMINDER,
 								display: false,
 							},
 							{ triggerTurn: true },
@@ -476,10 +495,10 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						// Pi 0.87 defers turns queued from agent_settled until every handler returns.
 						nextContinuation = undefined;
 						continuation.resolve();
-						reportSettlement(context, "continuation_queued");
+						reportSettlement(context, "continuation_queued", compacted ? {} : { compaction: "skipped" });
 					} else {
 						await continuation.promise;
-						reportSettlement(context, "continued");
+						reportSettlement(context, "continued", compacted ? {} : { compaction: "skipped" });
 					}
 				}
 			} catch (error) {
@@ -495,6 +514,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 
 		pi.on("session_compact", (event, context) => {
 			ensureRestored(context);
+			compactionRefused = false;
 			const decision = activeDebt?.decision;
 			const summaryTokens = tokenEstimate(event.compactionEntry.summary);
 			const savedTokens = decision ? Math.max(0, decision.archiveTokens - summaryTokens) : 0;

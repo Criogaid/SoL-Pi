@@ -192,18 +192,22 @@ describe("OCC request ledger diagnostics", () => {
 		});
 		await pi.emit("agent_settled", {}, { ...context, compact });
 		expect(compact).toHaveBeenCalledOnce();
-		const boundary = recordDiagnostic.mock.calls[0]?.[1];
+		const entries = recordDiagnostic.mock.calls.map(([, entry]) => entry);
+		const boundary = entries.find((entry) => entry.event === "occ_boundary");
 		const writeTokens = boundary?.writeTokens;
 		const archiveTokens = boundary?.archiveTokens;
 		if (typeof writeTokens !== "number" || typeof archiveTokens !== "number") throw new Error("Missing boundary cost metrics");
-		expect(recordDiagnostic.mock.calls[1]?.[1]).toEqual({
+		expect(entries.filter((entry) => entry.event === "occ_compaction")).toEqual([{
 			event: "occ_compaction", boundary: true, trigger: "manual", fromExtension: false,
 			summaryTokens: 2,
 			debtTokens: (writeTokens - archiveTokens + 2) * 11.5 + 2_000,
 			repaymentTokens: archiveTokens - 2,
 			summaryCostReported: 0.002,
-		});
-		expect(recordDiagnostic).toHaveBeenCalledTimes(2);
+		}]);
+		expect(entries.map(({ event, outcome }) => [event, outcome])).toEqual([
+			["occ_boundary", "compact"], ["occ_settlement", "compacting"],
+			["occ_compaction", undefined], ["occ_settlement", "continuation_queued"],
+		]);
 	});
 });
 
