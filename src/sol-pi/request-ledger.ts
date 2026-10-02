@@ -203,7 +203,7 @@ export function registerRequestLedger(pi: ExtensionAPI): RequestLedgerRecorder {
 		try {
 			return runtimeRoot(context);
 		} catch {
-			// In-memory or non-persisted sessions have no ledger location.
+			// Invalid session ids or unavailable storage disable diagnostics.
 			return undefined;
 		}
 	};

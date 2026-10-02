@@ -172,7 +172,7 @@ export function createObservationPackExtension(options: ObservationPackOptions =
 			try {
 				root = runtimeRoot(ctx);
 			} catch {
-				// Fail open: in-memory or non-persisted sessions (e.g. subagents) bypass observation packing.
+				// Invalid session ids or unavailable storage leave the original context intact.
 				return { messages: event.messages };
 			}
 			const projected = [...event.messages];

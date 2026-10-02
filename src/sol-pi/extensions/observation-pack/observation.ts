@@ -144,7 +144,7 @@ export function createObservation(
 	if (containsReducerReceipt(text)) return undefined;
 	const bytes = Buffer.byteLength(text, "utf8");
 	if (bytes <= thresholdBytes) return undefined;
-	if (!runtimeRoot) throw new Error("Persistent SoL-Pi runtime directory is unavailable");
+	if (!runtimeRoot) throw new Error("SoL-Pi runtime directory is unavailable");
 
 	const contentHash = hash(text);
 	const id = `obs_${hash(`${message.toolName}\0${message.toolCallId}\0${contentHash}`).slice(0, 24)}`;

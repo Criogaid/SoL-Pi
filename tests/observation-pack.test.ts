@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createObservationPackExtension,
@@ -16,6 +17,7 @@ import {
 	THRESHOLD_BYTES,
 } from "../src/sol-pi/extensions/observation-pack/index.ts";
 import { componentText, FakePi, FakeSessionManager, fakeContext, plainTheme } from "./helpers.ts";
+import { runtimeRoot } from "../src/sol-pi/runtime-paths.ts";
 
 const roots: string[] = [];
 const SESSION_ID = "session-a";
@@ -97,23 +99,49 @@ function captureConsoleErrors(): string[] {
 }
 
 describe("observation pack", () => {
+	it("archives and recalls large observations without a session directory", async () => {
+		const manager = SessionManager.inMemory();
+		const context = fakeContext("", { sessionManager: manager });
+		const root = runtimeRoot(context);
+		roots.push(root);
+		const body = `in-memory observation\n${repeatPastThreshold("recall bytes\n")}`;
+		const message = toolResult(body);
+		const pi = observationPackPi();
+		for (let index = 0; index < FULL_SENDS; index++) {
+			expect(resultText((await pi.emitContext([message, ...responses(index)], context))[0]!)).toBe(body);
+		}
+		const placeholder = resultText((await pi.emitContext([message, ...responses(FULL_SENDS)], context))[0]!);
+		const id = placeholder.match(/id: (obs_[a-f0-9]{24})/u)?.[1];
+		expect(id).toBeTruthy();
+		expect(await readFile(join(root, "observation-pack", "objects", `${id}.txt`), "utf8")).toBe(body);
+		const recalled = await observationPackPi().tool("obs_recall").execute(
+			"recall-memory", { id, offset: 0 }, undefined, undefined,
+			fakeContext("", { sessionManager: manager }),
+		);
+		expect(recalled.content).toEqual(expect.arrayContaining([
+			expect.objectContaining({ type: "text", text: expect.stringContaining("in-memory observation") }),
+		]));
+		expect(manager.getSessionFile()).toBeUndefined();
+	});
+
 	it("registers its public surface without legacy environment flags", () => {
 		const pi = observationPackPi();
 		expect(pi.handlers.has("context")).toBe(true);
 		expect(pi.registeredTools.map((tool) => tool.name)).toEqual(["obs_recall"]);
 	});
 
-	it("fails open on an in-memory session without a persistent directory", async () => {
+	it("fails open when the session id cannot name an archive directory", async () => {
 		const pi = observationPackPi();
 		const message = toolResult(repeatPastThreshold("observation bytes\n"));
-		const inMemory = new FakeSessionManager([], "session-a", "");
-		const projected = await pi.emitContext([message], fakeContext(inMemory));
-		expect(projected).toEqual([message]);
+		const inMemory = new FakeSessionManager([], "../unsafe", "");
+		const projected = await pi.emitContext([message, ...responses(FULL_SENDS)], fakeContext(inMemory));
+		expect(projected[0]).toEqual(message);
 	});
 
 	it("reports an unknown observation id when recalling from an in-memory session", async () => {
 		const pi = observationPackPi();
-		const inMemory = new FakeSessionManager([], "session-a", "");
+		const inMemory = SessionManager.inMemory();
+		roots.push(runtimeRoot(fakeContext("", { sessionManager: inMemory })));
 		await expect(
 			pi
 				.tool("obs_recall")
@@ -122,7 +150,7 @@ describe("observation pack", () => {
 					{ id: "obs_0123456789abcdef01234567" },
 					undefined,
 					undefined,
-					fakeContext(inMemory),
+					fakeContext("", { sessionManager: inMemory }),
 				),
 		).rejects.toThrow("Unknown observation id");
 	});
