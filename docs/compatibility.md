@@ -92,7 +92,9 @@ The earlier [real-provider verification](research/2026-09-30-fixes-validation.md
 
 ## Dependency security
 
-The root manifest overrides `brace-expansion` to its patched version. The root lockfile omits Pi's `hasShrinkwrap` flag so npm applies that override instead of reinstalling the version in Pi's published shrinkwrap. Keep both changes together: editing the resolved version alone can make lockfile audit pass while `npm ci` still installs vulnerable files. Verify the installed dependency with `npm ls brace-expansion --all` after a clean install.
+The root manifest overrides `brace-expansion` to its patched version. The root lockfile omits Pi's `hasShrinkwrap` flag so npm applies that override instead of reinstalling the version in Pi's published shrinkwrap. Keep both changes together: editing the resolved version alone can make lockfile audit pass while `npm ci` still installs vulnerable files.
+
+`node scripts/check-pi-dependencies.mjs`, included in `npm run check` and the CI matrix, rejects that marker and verifies the version resolved by Pi's `minimatch` against the root override. It reads the installed package, so a patched hoisted copy cannot hide a vulnerable nested copy. Run this check after a clean install alongside `npm audit --audit-level=high`.
 
 These resolutions apply to this checkout. They do not update a separately installed Pi CLI or another project's dependency tree.
 

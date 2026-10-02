@@ -153,7 +153,7 @@ npm audit --audit-level=high
 node scripts/check-pi-compat.mjs
 ```
 
-`npm run check` covers TypeScript, the complete test suite, and package inspection. The development dependency set is pinned to Pi 0.99.2; runtime Pi packages remain peer dependencies so Pi owns their installation and upgrades.
+`npm run check` verifies Pi's installed dependency override, then runs TypeScript, the complete test suite, and package inspection. The development dependency set is pinned to Pi 0.99.2; runtime Pi packages remain peer dependencies so Pi owns their installation and upgrades.
 
 The source checkout also contains an [efficiency and reliability review](docs/research/2026-09-29-efficiency-review.md), an aggregate session audit, and offline reproduction scripts. These research artifacts distinguish executed findings from unverified performance hypotheses and are excluded from the npm package.
 
