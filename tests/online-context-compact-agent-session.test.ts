@@ -53,6 +53,8 @@ async function runCompactionScenario(
 	await mkdir(agentDir);
 
 	let session: AgentSession | undefined;
+	// Keep the second compaction profitable when Pi retains the entire latest turn.
+	const historySegmentCharacters = 12_000;
 	try {
 		const finalReply = `final reply after ${requestedCompactions} online compaction${requestedCompactions === 1 ? "" : "s"}`;
 		const faux = fauxProvider({
@@ -73,7 +75,7 @@ async function runCompactionScenario(
 			} else {
 				responses.push(
 					fauxAssistantMessage(
-						ordinal === 1 ? openPlan : [fauxText(`second phase work ${"z".repeat(6_000)}`), openPlan],
+						ordinal === 1 ? openPlan : [fauxText(`second phase work ${"z".repeat(historySegmentCharacters)}`), openPlan],
 						{ stopReason: "toolUse" },
 					),
 					fauxAssistantMessage(donePlan, { stopReason: "toolUse" }),
@@ -117,7 +119,7 @@ async function runCompactionScenario(
 				if (failCompaction) return;
 				return {
 					compaction: {
-						summary: `deterministic compacted history ${"s".repeat(6_000)}`,
+						summary: `deterministic compacted history ${"s".repeat(historySegmentCharacters)}`,
 						firstKeptEntryId: event.preparation.firstKeptEntryId,
 						tokensBefore: event.preparation.tokensBefore,
 					},
@@ -132,10 +134,10 @@ async function runCompactionScenario(
 		const sessionManager = SessionManager.inMemory(cwd);
 		sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: `historical request ${"x".repeat(6_000)}` }],
+			content: [{ type: "text", text: `historical request ${"x".repeat(historySegmentCharacters)}` }],
 			timestamp: Date.now() - 2,
 		});
-		sessionManager.appendMessage(fauxAssistantMessage(`historical response ${"y".repeat(6_000)}`));
+		sessionManager.appendMessage(fauxAssistantMessage(`historical response ${"y".repeat(historySegmentCharacters)}`));
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
 			agentDir,

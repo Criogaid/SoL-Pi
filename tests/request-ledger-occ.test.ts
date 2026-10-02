@@ -4,7 +4,7 @@
  */
 /** Drive OCC's real plan transitions and public lifecycle hooks; no model or summarizer is called. */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { CompactOptions, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { CompactOptions, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +34,7 @@ afterEach(() => {
 	rmSync(directory, { recursive: true, force: true });
 });
 
-async function plan(pi: FakePi, context: ExtensionContext, id: string, steps: PlanUpdateInput["steps"]) {
+async function plan(pi: FakePi, context: ExtensionToolContext, id: string, steps: PlanUpdateInput["steps"]) {
 	return pi.tool("update_plan").execute(id, { steps }, undefined, undefined, context);
 }
 
@@ -59,7 +59,7 @@ function compaction(summary = "摘要🙂", cost?: number) {
 	};
 }
 
-async function fixture(overrides: Partial<ExtensionContext> = {}, history = true) {
+async function fixture(overrides: Partial<ExtensionToolContext> = {}, history = true) {
 	const manager = new FakeSessionManager([], "session-a", directory);
 	if (history) {
 		manager.appendMessage({ role: "user", content: `old ${"x".repeat(12_000)}`, timestamp: 0 });
@@ -79,7 +79,7 @@ async function fixture(overrides: Partial<ExtensionContext> = {}, history = true
 	return { pi, context, abort, recordDiagnostic };
 }
 
-async function completeBoundary(pi: FakePi, context: ExtensionContext) {
+async function completeBoundary(pi: FakePi, context: ExtensionToolContext) {
 	await plan(pi, context, "plan-open", OPEN);
 	// Faux streams do not invoke onPayload; dispatch the provider hook explicitly.
 	await pi.emit("before_provider_request", { type: "before_provider_request", payload: {} }, context);

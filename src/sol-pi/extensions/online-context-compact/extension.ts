@@ -536,7 +536,7 @@ export function createOnlineContextCompactExtension(options: OnlineContextCompac
 						throw error;
 					}
 					if (context.isIdle() && nextContinuation === continuation) {
-						// Pi 0.87 defers turns queued from agent_settled until every handler returns.
+						// Pi defers turns queued from agent_settled until every handler returns.
 						nextContinuation = undefined;
 						continuation.resolve();
 						reportSettlement(context, "continuation_queued", compacted ? {} : { compaction: "skipped" });

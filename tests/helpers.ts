@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionContext, SessionEntry, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, SessionEntry, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -180,8 +180,8 @@ export class FakePi {
 
 export function fakeContext(
 	sessionManager: FakeSessionManager | string,
-	overrides: Partial<ExtensionContext> = {},
-): ExtensionContext {
+	overrides: Partial<ExtensionToolContext> = {},
+): ExtensionToolContext {
 	const manager =
 		typeof sessionManager === "string" ? new FakeSessionManager([], "session-a", sessionManager) : sessionManager;
 	return {
@@ -202,6 +202,8 @@ export function fakeContext(
 		getContextUsage: () => undefined,
 		compact: () => undefined,
 		getSystemPrompt: () => "",
+		tools: [],
+		executeTool: async () => { throw new Error("Nested tool execution is not configured in this test context"); },
 		...overrides,
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 }
